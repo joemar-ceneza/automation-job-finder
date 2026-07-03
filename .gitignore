@@ -1,0 +1,15 @@
+.env
+venv/
+logs/
+output/
+__pycache__/
+*.pyc
+
+# Personal data — don't push your resume to a remote
+resume.pdf
+*.pdf
+
+# Legacy artifacts from the pre-SQLite version
+debug_page.html
+jobs_raw_temp.json
+ranked_jobs.csv
