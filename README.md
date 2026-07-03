@@ -4,13 +4,16 @@
 Scrapes job listings from JobStreet Philippines, scores them against your
 resume's skills using weighted keyword matching (skills in the job title
 count more than skills in the description), and saves results to a local
-SQLite database plus a ranked CSV. Jobs are deduplicated and tracked across
-runs, so re-running only scores listings you haven't seen before.
+SQLite database plus a ranked CSV and a browsable HTML report. Jobs are
+deduplicated and tracked across runs, you can record which ones you applied
+to, and it can email you a digest of new matches — making it a lightweight
+job-search tracker, not just a scraper.
 
 ## Requirements
 - Python 3.10+
 - Windows OS (works elsewhere too)
-- No credentials needed — only public pages are scraped
+- No credentials needed for scraping — only public pages are read
+- Optional: a Gmail account with an App Password, only for the `--email` digest
 
 ## Setup
 1. Clone or download this project
@@ -27,38 +30,65 @@ runs, so re-running only scores listings you haven't seen before.
 4. Edit `skills.txt` — replace the example entries with the actual skills,
    tools, and keywords from your resume (one per line). The script only
    scores jobs against what's in this file, so make it accurate.
+5. (Only for `--email`) Copy `.env.example` to `.env` and fill in your
+   Gmail address and an App Password
+   (https://myaccount.google.com/apppasswords — requires 2-Step Verification).
 
 ## How to Run
 ```
 python main.py path\to\resume.pdf "python developer" --pages 2
 ```
 
-More thorough (visits each job's detail page for the full description, and
-filters out jobs asking for more than 3 years of experience):
+Search several roles at once, limited to a location:
 ```
-python main.py resume.pdf "python developer" --full-desc --max-years 3
+python main.py resume.pdf "python developer, automation engineer" --location "Metro Manila"
+```
+
+More thorough — full descriptions, filter jobs asking for over 3 years of
+experience, hide weak matches and low salaries, email me the new ones:
+```
+python main.py resume.pdf "python developer" --full-desc --max-years 3 --min-score 15 --min-salary 40000 --email
+```
+
+Record what you did with a job (copy its URL from the report):
+```
+python main.py --set-status https://ph.jobstreet.com/job/12345678 applied
+```
+
+Archive listings that have vanished from search results for 30+ days:
+```
+python main.py --prune-days 30
 ```
 
 The pipeline:
 1. Extracts text from your resume PDF and matches it against `skills.txt`
-2. Searches JobStreet PH for your keyword, deduplicating reposted listings
-   by job URL (fallback: normalized title+company)
+2. Searches JobStreet PH for each keyword (comma-separated), deduplicating
+   reposted listings by job URL (fallback: normalized title+company)
 3. Checks `output/jobs.db` and scores only jobs not seen in previous runs
-4. Saves everything to SQLite and exports a ranked CSV — new listings are
-   flagged `new_this_run = yes`
+4. Saves everything to SQLite and exports a ranked CSV + `output/report.html`
+   — new listings are flagged `new_this_run = yes`
+5. With `--email`, sends a Gmail digest of the new matches
 
 ## Options
 
-| Flag          | Default                  | Description                                        |
-|---------------|--------------------------|----------------------------------------------------|
-| `--skills`    | `skills.txt`             | Path to your skills keyword file                   |
-| `--pages`     | `2`                      | Number of search-result pages to scrape            |
-| `--delay`     | `3.0`                    | Seconds between page requests (also rate-limits detail pages) |
-| `--full-desc` | off                      | Visit each job's detail page for the full description (slower, more accurate scoring) |
-| `--max-years` | off                      | Your years of experience — jobs requiring more are filtered out |
-| `--only-new`  | off                      | Export only jobs not seen in previous runs to the CSV |
-| `--debug`     | off                      | Run browser visibly, save page HTML for every page |
-| `--out`       | `output/ranked_jobs.csv` | Output CSV path                                    |
+| Flag           | Default                  | Description                                        |
+|----------------|--------------------------|----------------------------------------------------|
+| `--skills`     | `skills.txt`             | Path to your skills keyword file                   |
+| `--pages`      | `2`                      | Search-result pages to scrape per keyword          |
+| `--delay`      | `3.0`                    | Seconds between page requests (also rate-limits detail pages) |
+| `--location`   | off                      | Limit results to a location, e.g. `"Metro Manila"` |
+| `--full-desc`  | off                      | Visit each job's detail page for the full description (slower, more accurate scoring) |
+| `--max-years`  | off                      | Your years of experience — jobs requiring more are filtered out |
+| `--min-score`  | off                      | Exclude jobs scoring below this percentage from exports |
+| `--min-salary` | off                      | Exclude jobs whose stated max monthly salary (PHP) is below this; jobs with no stated salary are kept |
+| `--only-new`   | off                      | Export only jobs not seen in previous runs         |
+| `--rescore`    | off                      | Re-score all stored jobs against the current skill list |
+| `--prune-days` | off                      | Archive jobs not seen in N days (standalone or during a run) |
+| `--set-status` | —                        | `--set-status <job_key or URL> <status>` records e.g. applied/interested/rejected, then exits |
+| `--email`      | off                      | Email a digest of new matches via Gmail SMTP (needs `.env`) |
+| `--debug`      | off                      | Run browser visibly, save page HTML for every page |
+| `--out`        | `output/ranked_jobs.csv` | Output CSV path                                    |
+| `--html`       | `output/report.html`     | Output HTML report path                            |
 
 ## How scoring works
 - A skill found in the **job title** counts ×3; a skill found only in the
@@ -68,29 +98,50 @@ The pipeline:
   `SKILL_ALIASES` map in `config.py` when you add skills to `skills.txt`.
 - Duplicate lines in `skills.txt` are ignored so a repeated skill can't be
   double-counted.
-- The percentage is normalized against the maximum possible score, so
-  numbers are lower than the old unweighted version — compare jobs against
-  each other, not against the old scores.
+- The percentage is normalized against the maximum possible score —
+  compare jobs against each other, not against 100.
 - A regex extractor pulls "required years of experience" phrases (e.g.
   "at least 5 years", "3-5 years experience") into the `required_years`
-  CSV column; `--max-years` uses it to filter.
+  column; `--max-years` uses it to filter.
 - **Salary**: advertised salaries (e.g. "₱50,000 per month") are captured
-  from search cards — and from detail pages with `--full-desc` — into the
-  `salary` column. Many ads don't state one, so blanks are normal.
+  from search cards — and from detail pages with `--full-desc` — and
+  normalized into numeric monthly `salary_min`/`salary_max` columns
+  (yearly amounts ÷12; hourly/daily rates are left unparsed). Many ads
+  don't state one, so blanks are normal.
+- **Work arrangement**: Remote / Hybrid / On-site is detected from the ad
+  text into the `work_arrangement` column when the ad mentions it.
+- **Posting date**: JobStreet's "3d ago" is converted to an absolute date
+  in the `listing_date` column at scrape time.
 
-## Persistence
+## Persistence & tracking
 - `output/jobs.db` (SQLite) is the source of truth. Each job stores its
-  score, matched skills, required years, description, `first_seen`, and
-  `last_seen` timestamps.
+  score, matched skills, required years, salary, description, posting date,
+  `status`, and `first_seen`/`last_seen` timestamps.
 - Already-seen jobs are not re-scored; their stored score appears in the
-  CSV with `new_this_run = no`. Note: if you later switch to `--full-desc`,
-  previously seen jobs keep their teaser-based score. Delete `output/jobs.db`
-  to start fresh.
-- Inspect the db anytime: `sqlite3 output/jobs.db "SELECT title, score_percent, first_seen FROM jobs ORDER BY score_percent DESC LIMIT 20"`
+  CSV with `new_this_run = no`.
+- **Status tracking**: every job starts as `new`. Use `--set-status` to
+  record `interested`, `applied`, `rejected`, or anything else — it shows
+  in the CSV/HTML `status` column on every future run.
+- **Skill list changes**: the pipeline stores a fingerprint of your matched
+  skills. If it changes, you'll get a warning that stored scores are stale —
+  run once with `--rescore` to refresh them (uses stored descriptions; no
+  re-scraping).
+- **Pruning**: `--prune-days N` archives jobs whose `last_seen` is older
+  than N days. Archived jobs disappear from exports but are NOT deleted,
+  and are automatically un-archived if they reappear in search results.
+- Inspect the db anytime: `sqlite3 output/jobs.db "SELECT title, score_percent, status FROM jobs ORDER BY score_percent DESC LIMIT 20"`
+
+## Email digest
+`--email` sends the run's new matches (title, score, salary, matched skills,
+links) to `EMAIL_RECIPIENT` via Gmail SMTP. Configure `.env` first (see
+`.env.example`); the digest is skipped with a clear log message when
+credentials are missing. Combine with `--min-score` so the email only
+contains matches worth reading. Scheduled daily via Task Scheduler +
+`--email`, this becomes a hands-off job alert.
 
 ## If scraping returns 0 results
 JobStreet updates their page markup periodically, which breaks selectors.
-When a page yields 0 listings the current HTML is now saved **automatically**
+When a page yields 0 listings the current HTML is saved **automatically**
 to `logs/debug_no_results_*.html`. To fix:
 
 1. Open the saved HTML in a browser
@@ -101,15 +152,17 @@ Failed page loads are retried 3 times with exponential backoff before giving
 up, and a screenshot is saved to `logs/screenshots/` on hard failures.
 
 ## Important notes
-- **Rate limiting**: keep `--pages` low. The 3-second delay between requests
-  (including detail-page visits with `--full-desc`) is intentional — don't
-  remove it.
+- **Rate limiting**: keep `--pages` and the keyword count low. The 3-second
+  delay between requests (including detail-page visits with `--full-desc`)
+  is intentional — don't remove it.
 - **Terms of Service**: JobStreet's ToS generally restricts automated
   scraping. This script is intended for personal, non-commercial job
   searching at low volume, not for building a job board or reselling data.
   Use at your own discretion.
 - **No login required**: only public search-result and job-detail pages are
-  read; no account credentials are used or stored.
+  read; no JobStreet credentials are used or stored. The only credentials
+  in the project are your own Gmail App Password in `.env` (never
+  committed) for the optional digest.
 
 ## Project Structure
 ```
@@ -119,11 +172,13 @@ auto-find-job/
 ├── utils.py           # Generic retry helper (exponential backoff)
 ├── resume_parser.py   # Extracts text from PDF resume, matches skills.txt
 ├── scraper.py         # Playwright scraper (search results + detail pages)
-├── matcher.py         # Weighted scoring, experience extraction, CSV export
-├── db_handler.py      # SQLite persistence (output/jobs.db)
+├── matcher.py         # Weighted scoring, salary/years extraction, CSV + HTML export
+├── db_handler.py      # SQLite persistence, status tracking, prune/rescore
+├── email_handler.py   # Gmail SMTP digest of new matches
 ├── skills.txt         # Your customizable skill/keyword list
+├── .env.example       # Template for Gmail credentials (copy to .env)
 ├── logs/              # automation.log, debug HTML, error screenshots
-└── output/            # jobs.db and ranked_jobs.csv
+└── output/            # jobs.db, ranked_jobs.csv, report.html
 ```
 
 ## Logs

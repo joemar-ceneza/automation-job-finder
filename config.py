@@ -2,8 +2,9 @@
 config.py
 All settings, constants, and configuration for the JobStreet job matcher.
 
-No credentials are needed for this project (it only reads public pages),
-so there is no .env. If credentials are ever added, load them from .env.
+Scraping needs no credentials (only public pages are read). The optional
+--email digest sends via Gmail SMTP; its credentials live in .env
+(see .env.example) and are loaded by email_handler.py — never here.
 """
 import os
 
@@ -19,6 +20,7 @@ LOG_FILE = os.path.join(LOGS_DIR, "automation.log")
 DB_PATH = os.path.join(OUTPUT_DIR, "jobs.db")
 DEFAULT_SKILLS_FILE = os.path.join(BASE_DIR, "skills.txt")
 DEFAULT_OUTPUT_CSV = os.path.join(OUTPUT_DIR, "ranked_jobs.csv")
+DEFAULT_OUTPUT_HTML = os.path.join(OUTPUT_DIR, "report.html")
 
 # ======================================================
 # SCRAPING
@@ -44,6 +46,7 @@ SELECTORS = {
     "job_location": "span[data-automation='jobLocation']",
     "job_teaser": "span[data-automation='jobShortDescription']",
     "job_salary": "span[data-automation='jobSalary']",
+    "job_listing_date": "[data-automation='jobListingDate']",
     "job_detail_description": "div[data-automation='jobAdDetails']",
     "job_detail_salary": "span[data-automation='job-detail-salary']",
 }
@@ -83,3 +86,13 @@ SKILL_ALIASES = {
     "GitHub (Version Control)": ["GitHub"],
     "Bash Command Line": ["Bash"],
 }
+
+# ======================================================
+# EMAIL DIGEST (Gmail SMTP)
+# ======================================================
+# Credentials (GMAIL_ADDRESS, GMAIL_APP_PASSWORD, EMAIL_RECIPIENT) live in
+# .env — see .env.example. Only non-secret settings belong here.
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = 587  # STARTTLS
+EMAIL_SUBJECT_PREFIX = "[Job Matcher]"
+EMAIL_MAX_ROWS = 30  # cap digest length; full list is always in the CSV/HTML

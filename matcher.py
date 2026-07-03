@@ -2,11 +2,13 @@
 matcher.py
 Scores scraped job listings against a resume's matched skills using weighted
 keyword matching (skills in the job title count more than skills in the
-teaser/description), extracts each job's required years of experience, and
-writes a ranked CSV.
+teaser/description), extracts required years of experience, normalizes
+advertised salaries, detects work arrangement, and exports ranked results
+to CSV and an HTML report.
 """
 import argparse
 import csv
+import html
 import json
 import logging
 import os
@@ -16,8 +18,10 @@ import config
 from resume_parser import skill_in_text
 
 CSV_FIELDNAMES = [
-    "score_percent", "title", "company", "location", "salary",
-    "matched_skills", "required_years", "first_seen", "new_this_run", "url",
+    "score_percent", "title", "company", "location", "work_arrangement",
+    "salary", "salary_min", "salary_max", "listing_date", "status",
+    "matched_skills", "required_years", "search_keyword",
+    "first_seen", "new_this_run", "url",
 ]
 
 
@@ -80,6 +84,59 @@ def _extract_required_years(job_text: str) -> int | None:
 
 
 # ======================================================
+# SALARY NORMALIZATION
+# ======================================================
+_SALARY_NUMBER_PATTERN = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+
+def _parse_salary(salary_text: str) -> tuple[int | None, int | None]:
+    """
+    Normalizes an advertised salary like "₱50,000 – ₱70,000 per month" to
+    numeric monthly (salary_min, salary_max). Yearly amounts are divided
+    by 12. Hourly/daily/weekly rates and blank text return (None, None) —
+    normalizing those reliably isn't possible.
+    """
+    if not salary_text:
+        return None, None
+    text_lower = salary_text.lower()
+    if re.search(r"per\s+(hour|day|week)|hourly|daily|weekly", text_lower):
+        return None, None
+
+    numbers = [float(number.replace(",", ""))
+               for number in _SALARY_NUMBER_PATTERN.findall(salary_text)]
+    numbers = [number for number in numbers if number >= 1000]  # skip "13th month" etc.
+    if not numbers:
+        return None, None
+
+    if re.search(r"per\s+(year|annum)|annually|yearly|/\s*yr", text_lower):
+        numbers = [number / 12 for number in numbers]
+
+    return round(min(numbers)), round(max(numbers))
+
+
+# ======================================================
+# WORK ARRANGEMENT DETECTION
+# ======================================================
+_ARRANGEMENT_PATTERNS = [
+    ("Hybrid", re.compile(r"\bhybrid\b", re.IGNORECASE)),
+    ("Remote", re.compile(r"\b(remote|work[ -]from[ -]home|wfh)\b", re.IGNORECASE)),
+    ("On-site", re.compile(r"\b(on[ -]?site|office[ -]based)\b", re.IGNORECASE)),
+]
+
+
+def _detect_work_arrangement(job_text: str) -> str:
+    """
+    Detects remote/hybrid/on-site from the job text. Hybrid wins over
+    remote (ads often say "hybrid remote setup"). Returns "" when the ad
+    doesn't say.
+    """
+    for label, pattern in _ARRANGEMENT_PATTERNS:
+        if pattern.search(job_text):
+            return label
+    return ""
+
+
+# ======================================================
 # PUBLIC API
 # ======================================================
 def rank_jobs(jobs: list[dict], resume_skills: list[str],
@@ -107,6 +164,8 @@ def rank_jobs(jobs: list[dict], resume_skills: list[str],
                           title, required_years)
             continue
 
+        salary_text = job.get("salary", "")
+        salary_min, salary_max = _parse_salary(salary_text)
         matched = [f"{skill} (title)" for skill in title_matches] + body_matches
         ranked.append({
             "job_key": job.get("job_key", ""),
@@ -114,9 +173,15 @@ def rank_jobs(jobs: list[dict], resume_skills: list[str],
             "title": title,
             "company": job.get("company", ""),
             "location": job.get("location", ""),
-            "salary": job.get("salary", ""),
+            "work_arrangement": _detect_work_arrangement(f"{title} {body}"),
+            "salary": salary_text,
+            "salary_min": salary_min if salary_min is not None else "",
+            "salary_max": salary_max if salary_max is not None else "",
+            "listing_date": job.get("listing_date", ""),
+            "status": "new",
             "matched_skills": ", ".join(matched),
             "required_years": required_years if required_years is not None else "",
+            "search_keyword": job.get("search_keyword", ""),
             "url": job.get("url", ""),
         })
 
@@ -139,6 +204,66 @@ def write_csv(ranked_jobs: list[dict], out_path: str) -> None:
         writer.writeheader()
         writer.writerows(ranked_jobs)
     logging.info("Wrote %d rows to %s", len(ranked_jobs), out_path)
+
+
+_HTML_STYLE = """
+body { font-family: Segoe UI, Arial, sans-serif; margin: 24px; color: #222; }
+h1 { font-size: 20px; }
+p.meta { color: #666; font-size: 13px; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; vertical-align: top; }
+th { background: #f0f3f7; position: sticky; top: 0; }
+tr:nth-child(even) { background: #fafafa; }
+a { color: #0b5fa5; text-decoration: none; }
+a:hover { text-decoration: underline; }
+.badge { background: #1a7f37; color: #fff; border-radius: 4px; padding: 1px 6px; font-size: 11px; }
+.score { font-weight: 600; }
+.skills { color: #555; font-size: 12px; }
+"""
+
+
+def _html_report_row(row: dict) -> str:
+    """Renders one ranked job as an HTML table row."""
+    title_link = (f'<a href="{html.escape(row.get("url", ""), quote=True)}" '
+                  f'target="_blank">{html.escape(row.get("title", ""))}</a>')
+    new_badge = ' <span class="badge">NEW</span>' if row.get("new_this_run") == "yes" else ""
+    cells = [
+        f'<td class="score">{row.get("score_percent", "")}%</td>',
+        f"<td>{title_link}{new_badge}</td>",
+        f"<td>{html.escape(str(row.get('company', '')))}</td>",
+        f"<td>{html.escape(str(row.get('location', '')))}</td>",
+        f"<td>{html.escape(str(row.get('work_arrangement', '') or ''))}</td>",
+        f"<td>{html.escape(str(row.get('salary', '') or ''))}</td>",
+        f"<td>{html.escape(str(row.get('listing_date', '') or ''))}</td>",
+        f"<td>{html.escape(str(row.get('status', '') or ''))}</td>",
+        f'<td class="skills">{html.escape(str(row.get("matched_skills", "")))}</td>',
+    ]
+    return "<tr>" + "".join(cells) + "</tr>"
+
+
+def write_html_report(ranked_jobs: list[dict], out_path: str,
+                      generated_note: str = "") -> None:
+    """Writes a browsable ranked report with clickable job links."""
+    out_dir = os.path.dirname(out_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+
+    header_cells = ["Score", "Job", "Company", "Location", "Arrangement",
+                    "Salary", "Posted", "Status", "Matched skills"]
+    rows_html = "\n".join(_html_report_row(row) for row in ranked_jobs)
+    document = (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<title>Ranked job matches</title>"
+        f"<style>{_HTML_STYLE}</style></head><body>"
+        f"<h1>Ranked job matches ({len(ranked_jobs)})</h1>"
+        f"<p class='meta'>{html.escape(generated_note)}</p>"
+        "<table><thead><tr>"
+        + "".join(f"<th>{cell}</th>" for cell in header_cells)
+        + f"</tr></thead><tbody>\n{rows_html}\n</tbody></table></body></html>"
+    )
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(document)
+    logging.info("Wrote HTML report to %s", out_path)
 
 
 if __name__ == "__main__":
