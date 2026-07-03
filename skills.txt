@@ -1,0 +1,48 @@
+# Edit this file to match YOUR actual resume skills.
+# One skill/keyword per line. Lines starting with # are ignored.
+# These are just starter examples based on common compliance/automation roles.
+
+Python
+Playwright
+Selenium
+SQL
+Automation
+Web Scraping
+Data Analysis
+Pandas
+REST API
+Git
+Process Automation
+Excel
+Reporting
+Web Design
+Responsive Website
+HTML 5
+CSS 3
+Sass
+Bootstrap 5
+Tailwind CSS
+JavaScript ES6
+jQuery
+React JS
+Next JS
+Node JS
+Express JS
+REST API
+API Integration
+Authentication
+Security
+Mongoose
+Prisma
+TypeScript
+PHP
+Python
+MongoDB
+MySQL
+PostgreSQL
+Strapi
+Stripe
+Bash Command Line
+NPM
+Git
+GitHub (Version Control)
