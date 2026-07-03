@@ -1,0 +1,9 @@
+# Edit this file to match YOUR actual resume skills.
+# One skill/keyword per line. Lines starting with # are ignored.
+# These are just starter examples based on common compliance/automation roles.
+
+Python
+Playwright
+Automation
+Web Scraping
+Data Analysis
