@@ -19,13 +19,13 @@ OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 LOG_FILE = os.path.join(LOGS_DIR, "automation.log")
 DB_PATH = os.path.join(OUTPUT_DIR, "jobs.db")
 DEFAULT_SKILLS_FILE = os.path.join(BASE_DIR, "skills.txt")
+DEFAULT_SKILLS_DRAFT = os.path.join(BASE_DIR, "skills_draft.txt")
 DEFAULT_OUTPUT_CSV = os.path.join(OUTPUT_DIR, "ranked_jobs.csv")
 DEFAULT_OUTPUT_HTML = os.path.join(OUTPUT_DIR, "report.html")
 
 # ======================================================
 # SCRAPING
 # ======================================================
-BASE_URL = "https://ph.jobstreet.com"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -38,17 +38,51 @@ PAGE_LOAD_TIMEOUT_MS = 30000
 RENDER_WAIT_MS = 2000  # settle time for JS-rendered search results
 DETAIL_WAIT_TIMEOUT_MS = 10000
 
-# Centralized selectors — patch here when JobStreet changes its markup.
+# Sites searched when --site isn't given. Each name maps to a
+# scraper_<name>.py module with a run_scraper() entry point.
+DEFAULT_SITES = ["jobstreet", "onlinejobs", "indeed", "remoteok", "remotive"]
+
+JOBSTREET_BASE_URL = "https://ph.jobstreet.com"
+ONLINEJOBS_BASE_URL = "https://www.onlinejobs.ph"
+INDEED_BASE_URL = "https://ph.indeed.com"
+REMOTEOK_API_URL = "https://remoteok.com/api"
+REMOTIVE_API_URL = "https://remotive.com/api/remote-jobs"
+API_TIMEOUT_SECONDS = 30
+
+# Centralized selectors per site — patch here when a site changes its markup.
 SELECTORS = {
-    "job_card": "article",
-    "job_title": "a[data-automation='jobTitle']",
-    "job_company": "a[data-automation='jobCompany'], span[data-automation='jobCompany']",
-    "job_location": "span[data-automation='jobLocation']",
-    "job_teaser": "span[data-automation='jobShortDescription']",
-    "job_salary": "span[data-automation='jobSalary']",
-    "job_listing_date": "[data-automation='jobListingDate']",
-    "job_detail_description": "div[data-automation='jobAdDetails']",
-    "job_detail_salary": "span[data-automation='job-detail-salary']",
+    "jobstreet": {
+        "job_card": "article",
+        "job_title": "a[data-automation='jobTitle']",
+        "job_company": "a[data-automation='jobCompany'], span[data-automation='jobCompany']",
+        "job_location": "span[data-automation='jobLocation']",
+        "job_teaser": "span[data-automation='jobShortDescription']",
+        "job_salary": "span[data-automation='jobSalary']",
+        "job_listing_date": "[data-automation='jobListingDate']",
+        "job_detail_description": "div[data-automation='jobAdDetails']",
+        "job_detail_salary": "span[data-automation='job-detail-salary']",
+    },
+    "onlinejobs": {
+        "job_card": "div.jobpost-cat-box.latest-job-post",
+        "job_title": "h4",
+        "job_title_badge": "h4 span.badge",
+        "job_link": "a[href*='/jobseekers/job/']",
+        "job_teaser": "div.desc",
+        "job_salary": "dl:has(i.icon-round-dollar) dd",
+        "job_listing_date": "p[data-temp]",
+        "job_detail_description": "#job-description",
+    },
+    "indeed": {
+        "job_card": "div.job_seen_beacon",
+        "job_title": "a.jcs-JobTitle span[title]",
+        "job_title_link": "a.jcs-JobTitle",
+        "job_company": "span[data-testid='company-name']",
+        "job_location": "div[data-testid='text-location']",
+        "job_teaser": "div[data-testid='belowJobSnippet']",
+        "job_salary": "[data-testid*='salary-snippet']",
+        "job_detail_description": "#jobDescriptionText",
+        "job_detail_salary": "#salaryInfoAndJobType",
+    },
 }
 
 # ======================================================
@@ -57,6 +91,11 @@ SELECTORS = {
 RETRY_ATTEMPTS = 3
 RETRY_DELAY_SECONDS = 2.0
 RETRY_BACKOFF = 2.0  # delay doubles after each failed attempt
+
+# ======================================================
+# APPLICATION STATUS (dashboard + --set-status)
+# ======================================================
+STATUS_OPTIONS = ["new", "interested", "applied", "rejected", "no answer"]
 
 # ======================================================
 # MATCHING
@@ -86,6 +125,51 @@ SKILL_ALIASES = {
     "GitHub (Version Control)": ["GitHub"],
     "Bash Command Line": ["Bash"],
 }
+
+# ======================================================
+# SKILLS GENERATION (--generate-skills)
+# ======================================================
+# Canonical skill names scanned against your resume to draft skills.txt.
+# Names that also appear in SKILL_ALIASES get alias matching for free.
+# Extend freely — only skills actually FOUND in your resume are written.
+MASTER_SKILLS = [
+    # Languages
+    "Python", "JavaScript ES6", "TypeScript", "PHP", "Java", "C#", "C++",
+    "Go", "Rust", "Ruby", "Kotlin", "Swift", "SQL", "Bash Command Line",
+    "PowerShell", "R", "Dart",
+    # Frontend
+    "HTML 5", "CSS 3", "Sass", "Less", "Bootstrap 5", "Tailwind CSS",
+    "jQuery", "React JS", "Next JS", "Vue.js", "Nuxt", "Angular", "Svelte",
+    "Redux", "Vite", "Webpack", "Responsive Website", "Web Design",
+    "UI/UX", "Figma",
+    # Backend / frameworks
+    "Node JS", "Express JS", "NestJS", "Django", "Flask", "FastAPI",
+    "Laravel", "CodeIgniter", "Spring Boot", "ASP.NET", "Ruby on Rails",
+    "GraphQL", "REST API", "API Integration", "WebSocket", "Microservices",
+    # Databases
+    "MySQL", "PostgreSQL", "MongoDB", "SQLite", "Redis", "MariaDB",
+    "SQL Server", "Oracle", "Firebase", "Supabase", "Elasticsearch",
+    "DynamoDB", "Prisma", "Mongoose", "Sequelize", "SQLAlchemy",
+    # Automation / scraping / testing
+    "Playwright", "Selenium", "Puppeteer", "BeautifulSoup", "Scrapy",
+    "Web Scraping", "Automation", "Pytest", "Jest", "Cypress", "Postman",
+    "n8n", "Zapier", "Make.com", "UiPath", "Power Automate",
+    # Data / AI
+    "Pandas", "NumPy", "Excel", "Power BI", "Tableau", "ETL",
+    "Data Analysis", "Machine Learning", "TensorFlow", "PyTorch",
+    "OpenAI API", "LangChain", "Reporting",
+    # Cloud / DevOps
+    "AWS", "Azure", "Google Cloud", "Docker", "Kubernetes", "Linux",
+    "Nginx", "Apache", "CI/CD", "Jenkins", "GitHub Actions", "Terraform",
+    "Vercel", "Netlify", "Heroku", "DigitalOcean",
+    # Tools / practices
+    "Git", "GitHub (Version Control)", "GitLab", "Bitbucket", "NPM",
+    "Yarn", "Jira", "Trello", "Agile", "Scrum", "WordPress", "Shopify",
+    "Stripe", "Strapi", "Authentication", "Security", "OAuth", "JWT",
+    "Unit Testing", "Debugging",
+    # Communication / office
+    "Microsoft Office", "Google Sheets", "Outlook", "Slack",
+]
 
 # ======================================================
 # EMAIL DIGEST (Gmail SMTP)

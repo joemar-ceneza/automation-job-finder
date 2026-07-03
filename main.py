@@ -22,7 +22,20 @@ import db_handler
 import email_handler
 import matcher
 import resume_parser
-import scraper
+import scraper_indeed
+import scraper_jobstreet
+import scraper_onlinejobs
+import scraper_remoteok
+import scraper_remotive
+
+# Site name -> scraper module. Each module exposes run_scraper().
+SITE_SCRAPERS = {
+    "jobstreet": scraper_jobstreet,
+    "onlinejobs": scraper_onlinejobs,
+    "indeed": scraper_indeed,
+    "remoteok": scraper_remoteok,
+    "remotive": scraper_remotive,
+}
 
 
 # ======================================================
@@ -57,6 +70,9 @@ def _parse_args() -> argparse.Namespace:
                         help="Seconds between page requests")
     parser.add_argument("--location", default="",
                         help="Limit results to a location, e.g. 'Metro Manila'")
+    parser.add_argument("--site", default=",".join(config.DEFAULT_SITES),
+                        help="Comma-separated sites to search: "
+                             + ", ".join(SITE_SCRAPERS))
     parser.add_argument("--debug", action="store_true",
                         help="Run browser visibly, save page HTML for every page")
     parser.add_argument("--full-desc", action="store_true",
@@ -77,6 +93,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--set-status", nargs=2, metavar=("JOB", "STATUS"),
                         help="Record a job's status (interested/applied/rejected/...) "
                              "by job_key or URL, then exit")
+    parser.add_argument("--generate-skills", action="store_true",
+                        help="Draft a skill list from your resume PDF into "
+                             "skills_draft.txt (review it, then replace "
+                             "skills.txt), then exit")
     parser.add_argument("--email", action="store_true",
                         help="Email a digest of new matches via Gmail SMTP (see .env.example)")
     parser.add_argument("--out", default=config.DEFAULT_OUTPUT_CSV,
@@ -85,11 +105,21 @@ def _parse_args() -> argparse.Namespace:
                         help="Output HTML report path")
     args = parser.parse_args()
 
-    maintenance_only = args.set_status or (args.prune_days is not None
-                                           and not args.keyword)
+    if args.generate_skills and not args.resume_pdf:
+        parser.error("--generate-skills needs your resume PDF, e.g. "
+                     "python main.py resume.pdf --generate-skills")
+    maintenance_only = (args.set_status or args.generate_skills
+                        or (args.prune_days is not None and not args.keyword))
     if not maintenance_only and (not args.resume_pdf or not args.keyword):
-        parser.error("resume_pdf and keyword are required "
-                     "(unless using --set-status or --prune-days alone)")
+        parser.error("resume_pdf and keyword are required (unless using "
+                     "--set-status, --generate-skills, or --prune-days alone)")
+
+    args.sites = [site.strip().lower() for site in args.site.split(",")
+                  if site.strip()]
+    unknown_sites = [site for site in args.sites if site not in SITE_SCRAPERS]
+    if unknown_sites:
+        parser.error(f"unknown site(s): {', '.join(unknown_sites)} — "
+                     f"choose from: {', '.join(SITE_SCRAPERS)}")
     return args
 
 
@@ -134,6 +164,20 @@ def _run_maintenance(args: argparse.Namespace) -> None:
         db_handler.prune_stale(args.prune_days)
 
 
+def _run_generate_skills(args: argparse.Namespace) -> None:
+    """Drafts a skill list from the resume PDF into skills_draft.txt."""
+    resume_text = resume_parser.extract_text_from_pdf(args.resume_pdf)
+    hits, extras = resume_parser.generate_skills_draft(resume_text)
+    if not hits and not extras:
+        logging.warning("No skills detected in %s — is the PDF text-based "
+                        "(not a scanned image)?", args.resume_pdf)
+        return
+    resume_parser.write_skills_draft(hits, extras, config.DEFAULT_SKILLS_DRAFT)
+    logging.info("Review %s, remove anything that doesn't reflect your "
+                 "skills, then replace %s with it.",
+                 config.DEFAULT_SKILLS_DRAFT, config.DEFAULT_SKILLS_FILE)
+
+
 # ======================================================
 # ORCHESTRATOR
 # ======================================================
@@ -141,6 +185,9 @@ def main() -> None:
     args = _parse_args()
     _setup_logging()
 
+    if args.generate_skills:
+        _run_generate_skills(args)
+        return
     if args.set_status or (args.prune_days is not None and not args.keyword):
         _run_maintenance(args)
         return
@@ -157,18 +204,27 @@ def main() -> None:
                         "your resume. Exiting.", args.skills)
         return
 
-    # Step 2: Scrape JobStreet PH
+    # Step 2: Scrape the selected job sites
     keywords = [keyword.strip() for keyword in args.keyword.split(",")
                 if keyword.strip()]
-    _log_step(2, f"Scraping JobStreet PH for {len(keywords)} keyword(s)")
-    jobs = scraper.run_scraper(keywords, max_pages=args.pages,
-                               delay_seconds=args.delay, debug=args.debug,
-                               fetch_details=args.full_desc,
-                               location=args.location)
+    _log_step(2, f"Scraping {len(args.sites)} site(s) for "
+                 f"{len(keywords)} keyword(s)")
+    jobs = []
+    for site in args.sites:
+        try:
+            site_jobs = SITE_SCRAPERS[site].run_scraper(
+                keywords, max_pages=args.pages, delay_seconds=args.delay,
+                debug=args.debug, fetch_details=args.full_desc,
+                location=args.location)
+            logging.info("[%s] Collected %d unique listings.", site, len(site_jobs))
+            jobs.extend(site_jobs)
+        except Exception as e:
+            logging.error("[%s] Scraper failed, continuing with other "
+                          "sites: %s", site, e)
     if not jobs:
-        logging.error("No jobs scraped. Inspect the debug HTML saved in %s "
-                      "and update SELECTORS in config.py if JobStreet changed "
-                      "its markup.", config.LOGS_DIR)
+        logging.error("No jobs scraped from any site. Inspect the debug HTML "
+                      "saved in %s and update SELECTORS in config.py if a "
+                      "site changed its markup.", config.LOGS_DIR)
         return
 
     # Step 3: Database housekeeping (prune, rescore, split new vs seen)
@@ -180,7 +236,7 @@ def main() -> None:
     current_hash = _skills_hash(resume_skills)
     stored_hash = db_handler.get_meta("skills_hash")
     if args.rescore:
-        rescored = matcher.rank_jobs(db_handler.fetch_all_active(), resume_skills)
+        rescored = matcher.rank_jobs(db_handler.fetch_all_jobs(), resume_skills)
         db_handler.update_scores(rescored)
     elif stored_hash and stored_hash != current_hash:
         logging.warning("Your matched skill list changed since jobs were last "
@@ -226,6 +282,7 @@ def main() -> None:
     combined = _apply_export_filters(combined, args.min_score, args.min_salary)
     matcher.write_csv(combined, args.out)
     generated_note = (f"Generated {datetime.now():%Y-%m-%d %H:%M} — "
+                      f"sites: {', '.join(args.sites)} — "
                       f"keywords: {', '.join(keywords)}"
                       + (f" — location: {args.location}" if args.location else ""))
     matcher.write_html_report(combined, args.html, generated_note)

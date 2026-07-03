@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     company           TEXT,
     location          TEXT,
     url               TEXT,
+    source            TEXT,
     salary            TEXT,
     salary_min        REAL,
     salary_max        REAL,
@@ -55,6 +56,7 @@ _MIGRATED_COLUMNS = {
     "listing_date": "TEXT",
     "status": "TEXT DEFAULT 'new'",
     "archived": "INTEGER DEFAULT 0",
+    "source": "TEXT",
 }
 
 
@@ -87,6 +89,15 @@ def init_db() -> None:
                 connection.execute(
                     f"ALTER TABLE jobs ADD COLUMN {column} {column_type}")
                 logging.info("Migrated database: added %s column.", column)
+        # Rows from the single-site era have unprefixed keys ("id:123") —
+        # prefix them with jobstreet: so they match the new multi-site keys.
+        cursor = connection.execute(
+            """UPDATE jobs SET job_key = 'jobstreet:' || job_key,
+                               source = 'jobstreet'
+               WHERE job_key LIKE 'id:%' OR job_key LIKE 'tc:%'""")
+        if cursor.rowcount:
+            logging.info("Migrated database: prefixed %d job keys with "
+                         "'jobstreet:'.", cursor.rowcount)
 
 
 # ======================================================
@@ -113,15 +124,15 @@ def insert_jobs(rows: list[dict]) -> None:
     with closing(_connect()) as connection, connection:
         connection.executemany(
             """INSERT OR REPLACE INTO jobs
-               (job_key, title, company, location, url, salary,
+               (job_key, title, company, location, url, source, salary,
                 salary_min, salary_max, work_arrangement, listing_date,
                 status, archived, search_keyword, score_percent,
                 matched_skills, required_years, description,
                 first_seen, last_seen)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)""",
             [
                 (row["job_key"], row["title"], row["company"], row["location"],
-                 row["url"], row.get("salary", ""),
+                 row["url"], row.get("source", ""), row.get("salary", ""),
                  row.get("salary_min") or None, row.get("salary_max") or None,
                  row.get("work_arrangement", ""), row.get("listing_date", ""),
                  row.get("status", "new"), row.get("search_keyword", ""),
@@ -164,14 +175,22 @@ def fetch_jobs(job_keys: list[str]) -> list[dict]:
 # ======================================================
 # PUBLIC API — APPLICATION STATUS
 # ======================================================
-_JOB_URL_ID_PATTERN = re.compile(r"/job/(\d+)")
+# URL shapes for each site, mapped to their site-prefixed key format.
+_JOB_URL_ID_PATTERNS = [
+    ("jobstreet", re.compile(r"jobstreet\.com/job/(\d+)")),
+    ("onlinejobs", re.compile(r"onlinejobs\.ph/jobseekers/job/.*-(\d+)/?(?:$|\?)")),
+    ("indeed", re.compile(r"indeed\.com/viewjob\?jk=([0-9a-f]+)")),
+    ("remoteok", re.compile(r"remoteok\.com/remote-jobs/.*?(\d+)/?(?:$|\?)")),
+    ("remotive", re.compile(r"remotive\.com/remote-jobs/.*-(\d+)/?(?:$|\?)")),
+]
 
 
 def _normalize_job_key(key_or_url: str) -> str:
-    """Accepts a stored job_key OR a JobStreet job URL and returns the key."""
-    id_match = _JOB_URL_ID_PATTERN.search(key_or_url)
-    if id_match:
-        return f"id:{id_match.group(1)}"
+    """Accepts a stored job_key OR a job URL from any site, returns the key."""
+    for source, pattern in _JOB_URL_ID_PATTERNS:
+        id_match = pattern.search(key_or_url)
+        if id_match:
+            return f"{source}:id:{id_match.group(1)}"
     return key_or_url
 
 
@@ -190,6 +209,19 @@ def set_status(key_or_url: str, status: str) -> bool:
         return False
     logging.info("Status of %s set to '%s'.", job_key, status)
     return True
+
+
+def update_statuses(status_by_key: dict[str, str]) -> int:
+    """Bulk status update (used by the dashboard). Returns rows changed."""
+    if not status_by_key:
+        return 0
+    with closing(_connect()) as connection, connection:
+        cursor = connection.executemany(
+            "UPDATE jobs SET status = ? WHERE job_key = ?",
+            [(status, job_key) for job_key, status in status_by_key.items()],
+        )
+    logging.info("Updated status of %d jobs.", cursor.rowcount)
+    return cursor.rowcount
 
 
 # ======================================================
@@ -212,11 +244,13 @@ def prune_stale(days: int) -> int:
     return cursor.rowcount
 
 
-def fetch_all_active() -> list[dict]:
-    """Returns every non-archived stored job (used by --rescore)."""
+def fetch_all_jobs(include_archived: bool = False) -> list[dict]:
+    """Returns every stored job (used by --rescore and the dashboard)."""
+    query = "SELECT * FROM jobs"
+    if not include_archived:
+        query += " WHERE archived = 0"
     with closing(_connect()) as connection:
-        rows = connection.execute(
-            "SELECT * FROM jobs WHERE archived = 0").fetchall()
+        rows = connection.execute(query).fetchall()
     return [dict(row) for row in rows]
 
 

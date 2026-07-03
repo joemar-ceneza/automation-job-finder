@@ -8,6 +8,7 @@ __pycache__/
 # Personal data — don't push your resume to a remote
 resume.pdf
 *.pdf
+skills_draft.txt
 
 # Legacy artifacts from the pre-SQLite version
 debug_page.html

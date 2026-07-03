@@ -63,6 +63,87 @@ def find_matching_skills(resume_text: str, skills: list[str]) -> list[str]:
     return [skill for skill in skills if skill_in_text(skill, text_lower)]
 
 
+# ======================================================
+# SKILLS DRAFT GENERATION (--generate-skills)
+# ======================================================
+_SECTION_HEADINGS = re.compile(
+    r"^\s*(?:technical\s+|core\s+)?(?:skills?|technologies|tech\s+stack)\b[\s:&|]*(?:and\s+tools)?\s*$",
+    re.IGNORECASE)
+_NEXT_SECTION = re.compile(
+    r"^\s*(experience|education|work history|employment|projects?|"
+    r"certifications?|references?|summary|about)\b", re.IGNORECASE)
+_TOKEN_SPLIT = re.compile(r"[,;|•·•\n/]+")
+
+
+def _extract_skills_section_tokens(resume_text: str) -> list[str]:
+    """
+    Finds the resume's skills/technologies section and splits its contents
+    into candidate skill tokens. Returns [] when no such section exists.
+    """
+    lines = resume_text.splitlines()
+    collected = []
+    inside_section = False
+    for line in lines:
+        if _SECTION_HEADINGS.match(line):
+            inside_section = True
+            continue
+        if inside_section:
+            if not line.strip() and collected:
+                break  # blank line after content ends the section
+            if _NEXT_SECTION.match(line) or len(collected) >= 15:
+                break
+            if line.strip():
+                collected.append(line)
+
+    tokens = []
+    seen_lower = set()
+    for raw_token in _TOKEN_SPLIT.split("\n".join(collected)):
+        token = raw_token.strip(" \t-–—:()")
+        if (2 <= len(token) <= 40 and not token.isdigit()
+                and token.lower() not in seen_lower):
+            seen_lower.add(token.lower())
+            tokens.append(token)
+    return tokens
+
+
+def generate_skills_draft(resume_text: str) -> tuple[list[str], list[str]]:
+    """
+    Drafts a skill list from the resume: returns (dictionary_hits, extras).
+    dictionary_hits are config.MASTER_SKILLS entries found in the resume
+    (alias-aware); extras are tokens from the resume's skills section that
+    the dictionary didn't already cover — they need manual review.
+    """
+    text_lower = resume_text.lower()
+    hits = [skill for skill in config.MASTER_SKILLS
+            if skill_in_text(skill, text_lower)]
+
+    covered = {skill.lower() for skill in hits}
+    for skill in hits:
+        covered.update(alias.lower() for alias in config.SKILL_ALIASES.get(skill, []))
+    extras = [token for token in _extract_skills_section_tokens(resume_text)
+              if token.lower() not in covered]
+    return hits, extras
+
+
+def write_skills_draft(hits: list[str], extras: list[str], out_path: str) -> None:
+    """
+    Writes the drafted skill list to out_path (never touches skills.txt
+    itself — review the draft, edit it, then replace skills.txt with it).
+    """
+    lines = ["# Draft skills generated from your resume — review before using!",
+             "# Keep the lines that truly reflect your skills, delete the rest,",
+             "# then replace skills.txt with this file.", ""]
+    lines += hits
+    if extras:
+        lines += ["", "# From your resume's skills section — not in the built-in",
+                  "# dictionary, so double-check spelling/usefulness:"]
+        lines += extras
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    logging.info("Wrote %d dictionary skills and %d extra candidates to %s",
+                 len(hits), len(extras), out_path)
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s - %(levelname)s - %(message)s")

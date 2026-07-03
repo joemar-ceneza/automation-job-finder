@@ -18,10 +18,10 @@ import config
 from resume_parser import skill_in_text
 
 CSV_FIELDNAMES = [
-    "score_percent", "title", "company", "location", "work_arrangement",
-    "salary", "salary_min", "salary_max", "listing_date", "status",
-    "matched_skills", "required_years", "search_keyword",
-    "first_seen", "new_this_run", "url",
+    "score_percent", "title", "company", "location", "source",
+    "work_arrangement", "salary", "salary_min", "salary_max",
+    "listing_date", "status", "matched_skills", "required_years",
+    "search_keyword", "first_seen", "new_this_run", "url",
 ]
 
 
@@ -93,13 +93,16 @@ def _parse_salary(salary_text: str) -> tuple[int | None, int | None]:
     """
     Normalizes an advertised salary like "₱50,000 – ₱70,000 per month" to
     numeric monthly (salary_min, salary_max). Yearly amounts are divided
-    by 12. Hourly/daily/weekly rates and blank text return (None, None) —
-    normalizing those reliably isn't possible.
+    by 12. Hourly/daily/weekly rates, dollar amounts (OnlineJobs.ph pays in
+    USD — mixing currencies would be misleading), and blank text return
+    (None, None).
     """
     if not salary_text:
         return None, None
     text_lower = salary_text.lower()
-    if re.search(r"per\s+(hour|day|week)|hourly|daily|weekly", text_lower):
+    if "$" in salary_text or "usd" in text_lower:
+        return None, None
+    if re.search(r"(?:per|an?)\s+(hour|day|week)|hourly|daily|weekly", text_lower):
         return None, None
 
     numbers = [float(number.replace(",", ""))
@@ -108,7 +111,7 @@ def _parse_salary(salary_text: str) -> tuple[int | None, int | None]:
     if not numbers:
         return None, None
 
-    if re.search(r"per\s+(year|annum)|annually|yearly|/\s*yr", text_lower):
+    if re.search(r"(?:per|a)\s+(year|annum)|annually|yearly|/\s*yr", text_lower):
         numbers = [number / 12 for number in numbers]
 
     return round(min(numbers)), round(max(numbers))
@@ -167,13 +170,16 @@ def rank_jobs(jobs: list[dict], resume_skills: list[str],
         salary_text = job.get("salary", "")
         salary_min, salary_max = _parse_salary(salary_text)
         matched = [f"{skill} (title)" for skill in title_matches] + body_matches
+        location = job.get("location", "")
         ranked.append({
             "job_key": job.get("job_key", ""),
             "score_percent": score,
             "title": title,
             "company": job.get("company", ""),
-            "location": job.get("location", ""),
-            "work_arrangement": _detect_work_arrangement(f"{title} {body}"),
+            "location": location,
+            "source": job.get("source", ""),
+            "work_arrangement": _detect_work_arrangement(
+                f"{title} {location} {body}"),
             "salary": salary_text,
             "salary_min": salary_min if salary_min is not None else "",
             "salary_max": salary_max if salary_max is not None else "",
@@ -232,6 +238,7 @@ def _html_report_row(row: dict) -> str:
         f"<td>{title_link}{new_badge}</td>",
         f"<td>{html.escape(str(row.get('company', '')))}</td>",
         f"<td>{html.escape(str(row.get('location', '')))}</td>",
+        f"<td>{html.escape(str(row.get('source', '') or ''))}</td>",
         f"<td>{html.escape(str(row.get('work_arrangement', '') or ''))}</td>",
         f"<td>{html.escape(str(row.get('salary', '') or ''))}</td>",
         f"<td>{html.escape(str(row.get('listing_date', '') or ''))}</td>",
@@ -248,8 +255,9 @@ def write_html_report(ranked_jobs: list[dict], out_path: str,
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
 
-    header_cells = ["Score", "Job", "Company", "Location", "Arrangement",
-                    "Salary", "Posted", "Status", "Matched skills"]
+    header_cells = ["Score", "Job", "Company", "Location", "Source",
+                    "Arrangement", "Salary", "Posted", "Status",
+                    "Matched skills"]
     rows_html = "\n".join(_html_report_row(row) for row in ranked_jobs)
     document = (
         "<!doctype html><html><head><meta charset='utf-8'>"
