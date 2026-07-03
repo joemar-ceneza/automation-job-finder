@@ -5,44 +5,42 @@
 Python
 Playwright
 Selenium
-SQL
 Automation
 Web Scraping
 Data Analysis
 Pandas
-REST API
-Git
-Process Automation
-Excel
-Reporting
-Web Design
-Responsive Website
-HTML 5
-CSS 3
-Sass
-Bootstrap 5
-Tailwind CSS
-JavaScript ES6
-jQuery
-React JS
-Next JS
-Node JS
-Express JS
-REST API
-API Integration
-Authentication
-Security
-Mongoose
-Prisma
+JavaScript (ES6+)
 TypeScript
 PHP
-Python
+SQL
+HTML5
+CSS3
+React.js
+Next.js
+Tailwind CSS
+Bootstrap 5
+Sass
+jQuery
+Responsive Web Design
+Node.js
+Express.js
+REST API development and integration
+API integration
+Authentication and Security
 MongoDB
 MySQL
 PostgreSQL
-Strapi
-Stripe
-Bash Command Line
+Mongoose
+Prisma
+Database Design
+Data extraction
+Process automation
+Quality Assurance (QA) testing
+Git & GitHub
 NPM
-Git
-GitHub (Version Control)
+Bash command line
+Strapi (Headless CMS)
+Stripe (Payment integration)
+Netlify
+GitHub Pages
+MongoDB Atlas
