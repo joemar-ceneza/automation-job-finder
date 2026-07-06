@@ -16,6 +16,7 @@ import logging
 import time
 import urllib.parse
 
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 import config
@@ -27,9 +28,19 @@ SOURCE = "indeed"
 _SELECTORS = config.SELECTORS[SOURCE]
 _RESULTS_PER_PAGE = 10  # Indeed's &start= offset step
 
-# Phrases that identify a Cloudflare/anti-bot interstitial page.
-_BLOCK_MARKERS = ("just a moment", "verify you are human", "additional verification",
-                  "checking your browser")
+# Phrases that identify a Cloudflare/anti-bot interstitial. Title markers
+# can be loose; body markers must be phrases that can't plausibly appear
+# in a real job ad, since we scan the page content for them.
+_TITLE_BLOCK_MARKERS = ("just a moment", "verify you are human",
+                        "additional verification", "checking your browser",
+                        "security check")
+_BODY_BLOCK_MARKERS = ("verify you are human", "checking your browser",
+                       "review the security of your connection",
+                       "cf-turnstile", "additional verification required")
+
+
+class BlockedError(Exception):
+    """Raised when Indeed serves an anti-bot verification page."""
 
 
 # ======================================================
@@ -48,7 +59,10 @@ def _build_search_url(keyword: str, page_num: int, location: str = "") -> str:
 def _is_blocked(page) -> bool:
     """True when the page is a Cloudflare/anti-bot challenge, not results."""
     title = (page.title() or "").lower()
-    return any(marker in title for marker in _BLOCK_MARKERS)
+    if any(marker in title for marker in _TITLE_BLOCK_MARKERS):
+        return True
+    content = (page.content() or "").lower()
+    return any(marker in content for marker in _BODY_BLOCK_MARKERS)
 
 
 # ======================================================
@@ -136,15 +150,23 @@ def _fetch_job_details(context, url: str) -> tuple[str, str]:
     """
     Opens a job's detail page in a fresh tab and returns
     (full_description, salary). Salary is "" when the ad doesn't state one.
+    Raises BlockedError when the page is an anti-bot challenge.
     """
     page = context.new_page()
     try:
         page.goto(url, wait_until="domcontentloaded",
                   timeout=config.PAGE_LOAD_TIMEOUT_MS)
         if _is_blocked(page):
-            raise Exception("blocked by anti-bot protection")
-        page.wait_for_selector(_SELECTORS["job_detail_description"],
-                               timeout=config.DETAIL_WAIT_TIMEOUT_MS)
+            raise BlockedError(f"anti-bot verification page at {url}")
+        try:
+            page.wait_for_selector(_SELECTORS["job_detail_description"],
+                                   timeout=config.DETAIL_WAIT_TIMEOUT_MS)
+        except PlaywrightTimeoutError:
+            # The challenge can render after domcontentloaded — recheck
+            # before treating this as an ordinary missing-selector timeout.
+            if _is_blocked(page):
+                raise BlockedError(f"anti-bot verification page at {url}")
+            raise
         detail_el = page.query_selector(_SELECTORS["job_detail_description"])
         salary_el = page.query_selector(_SELECTORS["job_detail_salary"])
         description = detail_el.inner_text().strip() if detail_el else ""
@@ -167,11 +189,22 @@ def _fetch_full_descriptions(context, listings: list[JobListing],
                 retries=config.RETRY_ATTEMPTS,
                 delay=config.RETRY_DELAY_SECONDS,
                 backoff=config.RETRY_BACKOFF,
+                give_up_on=(BlockedError,),
             )
             listing.description = description
             if salary and not listing.salary:
                 listing.salary = salary
             fetched += 1
+        except BlockedError:
+            # Retrying or continuing won't help — every remaining request
+            # would hit the same wall. Card teasers still get scored.
+            logging.warning(
+                "[indeed] Anti-bot verification hit after %d/%d detail "
+                "pages — skipping the rest; search-card teasers will be "
+                "used for scoring instead. This is Indeed's Cloudflare "
+                "protection and usually passes after a few hours.",
+                fetched, len(listings))
+            break
         except Exception as e:
             logging.error("[indeed] Could not fetch description for '%s' (%s): %s",
                           listing.title, listing.url, e)
