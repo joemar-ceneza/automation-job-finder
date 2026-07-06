@@ -20,8 +20,8 @@ from playwright.sync_api import sync_playwright
 
 import config
 import utils
-from scraper_common import (JobListing, make_job_key, save_debug_html,
-                            save_error_screenshot)
+from scraper_common import (AdGoneError, JobListing, make_job_key,
+                            save_debug_html, save_error_screenshot)
 
 SOURCE = "onlinejobs"
 _SELECTORS = config.SELECTORS[SOURCE]
@@ -128,11 +128,17 @@ def _scrape_search_page(page, keyword: str, page_num: int,
 # JOB DETAIL PAGES
 # ======================================================
 def _fetch_job_details(context, url: str) -> str:
-    """Opens a job's detail page in a fresh tab and returns the description."""
+    """
+    Opens a job's detail page in a fresh tab and returns the description.
+    Raises AdGoneError when the ad was removed after appearing in search.
+    """
     page = context.new_page()
     try:
-        page.goto(url, wait_until="domcontentloaded",
-                  timeout=config.PAGE_LOAD_TIMEOUT_MS)
+        response = page.goto(url, wait_until="domcontentloaded",
+                             timeout=config.PAGE_LOAD_TIMEOUT_MS)
+        if ((response is not None and response.status in (404, 410))
+                or "page not found" in (page.title() or "").lower()):
+            raise AdGoneError(f"job ad removed: {url}")
         page.wait_for_selector(_SELECTORS["job_detail_description"],
                                timeout=config.DETAIL_WAIT_TIMEOUT_MS)
         detail_el = page.query_selector(_SELECTORS["job_detail_description"])
@@ -154,8 +160,12 @@ def _fetch_full_descriptions(context, listings: list[JobListing],
                 retries=config.RETRY_ATTEMPTS,
                 delay=config.RETRY_DELAY_SECONDS,
                 backoff=config.RETRY_BACKOFF,
+                give_up_on=(AdGoneError,),
             )
             fetched += 1
+        except AdGoneError:
+            logging.info("[onlinejobs] '%s' is no longer advertised — "
+                         "keeping the search-card teaser.", listing.title)
         except Exception as e:
             logging.error("[onlinejobs] Could not fetch description for '%s' (%s): %s",
                           listing.title, listing.url, e)

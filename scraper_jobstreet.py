@@ -21,16 +21,27 @@ import time
 import urllib.parse
 from dataclasses import asdict
 
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 import config
 import utils
-from scraper_common import (JobListing, make_job_key, parse_relative_date,
-                            save_debug_html, save_error_screenshot)
+from scraper_common import (AdGoneError, JobListing, make_job_key,
+                            parse_relative_date, save_debug_html,
+                            save_error_screenshot)
 
 SOURCE = "jobstreet"
 _SELECTORS = config.SELECTORS[SOURCE]
 _JOB_ID_PATTERN = re.compile(r"/job/(\d+)")
+
+
+def _is_gone(page, response) -> bool:
+    """True when the job ad was removed/expired (404 or takedown page)."""
+    if response is not None and response.status in (404, 410):
+        return True
+    if "page not found" in (page.title() or "").lower():
+        return True
+    return "no longer advertised" in (page.content() or "").lower()
 
 
 # ======================================================
@@ -131,13 +142,23 @@ def _fetch_job_details(context, url: str) -> tuple[str, str]:
     """
     Opens a job's detail page in a fresh tab and returns
     (full_description, salary). Salary is "" when the ad doesn't state one.
+    Raises AdGoneError when the ad was removed after appearing in search.
     """
     page = context.new_page()
     try:
-        page.goto(url, wait_until="domcontentloaded",
-                  timeout=config.PAGE_LOAD_TIMEOUT_MS)
-        page.wait_for_selector(_SELECTORS["job_detail_description"],
-                               timeout=config.DETAIL_WAIT_TIMEOUT_MS)
+        response = page.goto(url, wait_until="domcontentloaded",
+                             timeout=config.PAGE_LOAD_TIMEOUT_MS)
+        if _is_gone(page, response):
+            raise AdGoneError(f"job ad removed: {url}")
+        try:
+            page.wait_for_selector(_SELECTORS["job_detail_description"],
+                                   timeout=config.DETAIL_WAIT_TIMEOUT_MS)
+        except PlaywrightTimeoutError:
+            # Takedown pages can render after domcontentloaded — recheck
+            # before treating this as an ordinary missing-selector timeout.
+            if _is_gone(page, response):
+                raise AdGoneError(f"job ad removed: {url}")
+            raise
         detail_el = page.query_selector(_SELECTORS["job_detail_description"])
         salary_el = page.query_selector(_SELECTORS["job_detail_salary"])
         description = detail_el.inner_text().strip() if detail_el else ""
@@ -153,6 +174,7 @@ def _fetch_full_descriptions(context, listings: list[JobListing],
     logging.info("[jobstreet] Fetching full descriptions for %d jobs "
                  "(one request per %.1fs)...", len(listings), delay_seconds)
     fetched = 0
+    gone = 0
     for index, listing in enumerate(listings, start=1):
         try:
             description, salary = utils.retry(
@@ -160,18 +182,25 @@ def _fetch_full_descriptions(context, listings: list[JobListing],
                 retries=config.RETRY_ATTEMPTS,
                 delay=config.RETRY_DELAY_SECONDS,
                 backoff=config.RETRY_BACKOFF,
+                give_up_on=(AdGoneError,),
             )
             listing.description = description
             if salary and not listing.salary:
                 listing.salary = salary
             fetched += 1
+        except AdGoneError:
+            # The ad was taken down between the search and now — keep the
+            # search-card teaser and move on; not worth retries or an error.
+            gone += 1
+            logging.info("[jobstreet] '%s' is no longer advertised — "
+                         "keeping the search-card teaser.", listing.title)
         except Exception as e:
             logging.error("[jobstreet] Could not fetch description for '%s' (%s): %s",
                           listing.title, listing.url, e)
         if index < len(listings):
             time.sleep(delay_seconds)  # be polite, avoid rate limits
-    logging.info("[jobstreet] Full descriptions fetched: %d/%d",
-                 fetched, len(listings))
+    logging.info("[jobstreet] Full descriptions fetched: %d/%d (%d ads "
+                 "no longer advertised)", fetched, len(listings), gone)
 
 
 def _scrape_keyword(page, keyword: str, max_pages: int, delay_seconds: float,

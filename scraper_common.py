@@ -15,6 +15,10 @@ from datetime import datetime, timedelta
 import config
 
 
+class AdGoneError(Exception):
+    """Raised when a job ad was removed/expired after appearing in search."""
+
+
 @dataclass
 class JobListing:
     job_key: str
