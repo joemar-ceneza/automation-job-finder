@@ -1,11 +1,10 @@
 """
 scraper_common.py
 Shared building blocks for the per-site scraper modules
-(scraper_jobstreet.py, scraper_onlinejobs.py, scraper_indeed.py):
+(scraper_jobstreet.py, scraper_onlinejobs.py):
 the JobListing dataclass, dedupe-key builder, relative-date parsing,
 and debug HTML / error screenshot snapshots.
 """
-import html
 import logging
 import os
 import re
@@ -27,7 +26,7 @@ class JobListing:
     location: str
     teaser: str
     url: str
-    source: str = ""           # which site this came from (jobstreet/onlinejobs/indeed)
+    source: str = ""           # which site this came from (jobstreet/onlinejobs)
     salary: str = ""
     description: str = ""
     listing_date: str = ""     # ISO date derived from the site's posted date
@@ -80,19 +79,6 @@ def parse_relative_date(raw_text: str) -> str:
     else:
         delta = timedelta(days=amount)
     return (datetime.now() - delta).date().isoformat()
-
-
-# ======================================================
-# TEXT CLEANUP
-# ======================================================
-_HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
-
-
-def html_to_text(html_content: str) -> str:
-    """Strips HTML tags/entities from API-provided job descriptions."""
-    text = _HTML_TAG_PATTERN.sub(" ", html_content or "")
-    text = html.unescape(text)
-    return re.sub(r"\s+", " ", text).strip()
 
 
 # ======================================================

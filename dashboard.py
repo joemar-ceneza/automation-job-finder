@@ -119,7 +119,7 @@ def _render_table(frame: pd.DataFrame) -> pd.DataFrame:
                 "Link", display_text="open", disabled=True),
         },
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         key="jobs_table",
     )
 

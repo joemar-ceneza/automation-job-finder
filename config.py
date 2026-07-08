@@ -6,6 +6,7 @@ Scraping needs no credentials (only public pages are read). The optional
 --email digest sends via Gmail SMTP; its credentials live in .env
 (see .env.example) and are loaded by email_handler.py — never here.
 """
+
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -17,6 +18,8 @@ LOGS_DIR = os.path.join(BASE_DIR, "logs")
 SCREENSHOTS_DIR = os.path.join(LOGS_DIR, "screenshots")
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 LOG_FILE = os.path.join(LOGS_DIR, "automation.log")
+LOG_MAX_BYTES = 5 * 1024 * 1024  # rotate automation.log at 5 MB
+LOG_BACKUP_COUNT = 3             # keep automation.log.1 … .3
 DB_PATH = os.path.join(OUTPUT_DIR, "jobs.db")
 DEFAULT_SKILLS_FILE = os.path.join(BASE_DIR, "skills.txt")
 DEFAULT_SKILLS_DRAFT = os.path.join(BASE_DIR, "skills_draft.txt")
@@ -40,14 +43,10 @@ DETAIL_WAIT_TIMEOUT_MS = 10000
 
 # Sites searched when --site isn't given. Each name maps to a
 # scraper_<name>.py module with a run_scraper() entry point.
-DEFAULT_SITES = ["jobstreet", "onlinejobs", "indeed", "remoteok", "remotive"]
+DEFAULT_SITES = ["jobstreet", "onlinejobs"]
 
 JOBSTREET_BASE_URL = "https://ph.jobstreet.com"
 ONLINEJOBS_BASE_URL = "https://www.onlinejobs.ph"
-INDEED_BASE_URL = "https://ph.indeed.com"
-REMOTEOK_API_URL = "https://remoteok.com/api"
-REMOTIVE_API_URL = "https://remotive.com/api/remote-jobs"
-API_TIMEOUT_SECONDS = 30
 
 # Centralized selectors per site — patch here when a site changes its markup.
 SELECTORS = {
@@ -72,17 +71,6 @@ SELECTORS = {
         "job_listing_date": "p[data-temp]",
         "job_detail_description": "#job-description",
     },
-    "indeed": {
-        "job_card": "div.job_seen_beacon",
-        "job_title": "a.jcs-JobTitle span[title]",
-        "job_title_link": "a.jcs-JobTitle",
-        "job_company": "span[data-testid='company-name']",
-        "job_location": "div[data-testid='text-location']",
-        "job_teaser": "div[data-testid='belowJobSnippet']",
-        "job_salary": "[data-testid*='salary-snippet']",
-        "job_detail_description": "#jobDescriptionText",
-        "job_detail_salary": "#salaryInfoAndJobType",
-    },
 }
 
 # ======================================================
@@ -101,8 +89,10 @@ STATUS_OPTIONS = ["new", "interested", "applied", "rejected", "no answer"]
 # MATCHING
 # ======================================================
 TITLE_MATCH_WEIGHT = 3.0  # a skill found in the job title
-BODY_MATCH_WEIGHT = 1.0   # a skill found only in the teaser/description
-MAX_PLAUSIBLE_YEARS = 20  # ignore "years" numbers above this (e.g. "25 years in business")
+BODY_MATCH_WEIGHT = 1.0  # a skill found only in the teaser/description
+MAX_PLAUSIBLE_YEARS = (
+    20  # ignore "years" numbers above this (e.g. "25 years in business")
+)
 
 # Alternate spellings for skills.txt entries. A skill counts as matched if
 # the skill itself OR any alias appears (whole-word) in the text. Keys must
@@ -124,6 +114,10 @@ SKILL_ALIASES = {
     "PostgreSQL": ["Postgres"],
     "GitHub (Version Control)": ["GitHub"],
     "Bash Command Line": ["Bash"],
+    "MongoDB": ["Mongo"],
+    "Responsive Website": ["Responsive Design", "Responsive Web Design"],
+    "Reporting": ["Reports"],
+    "Debugging": ["Debug", "Troubleshooting"],
 }
 
 # ======================================================
@@ -134,41 +128,152 @@ SKILL_ALIASES = {
 # Extend freely — only skills actually FOUND in your resume are written.
 MASTER_SKILLS = [
     # Languages
-    "Python", "JavaScript ES6", "TypeScript", "PHP", "Java", "C#", "C++",
-    "Go", "Rust", "Ruby", "Kotlin", "Swift", "SQL", "Bash Command Line",
-    "PowerShell", "R", "Dart",
+    "Python",
+    "JavaScript ES6",
+    "TypeScript",
+    "PHP",
+    "Java",
+    "C#",
+    "C++",
+    "Go",
+    "Rust",
+    "Ruby",
+    "Kotlin",
+    "Swift",
+    "SQL",
+    "Bash Command Line",
+    "PowerShell",
+    "R",
+    "Dart",
     # Frontend
-    "HTML 5", "CSS 3", "Sass", "Less", "Bootstrap 5", "Tailwind CSS",
-    "jQuery", "React JS", "Next JS", "Vue.js", "Nuxt", "Angular", "Svelte",
-    "Redux", "Vite", "Webpack", "Responsive Website", "Web Design",
-    "UI/UX", "Figma",
+    "HTML 5",
+    "CSS 3",
+    "Sass",
+    "Less",
+    "Bootstrap 5",
+    "Tailwind CSS",
+    "jQuery",
+    "React JS",
+    "Next JS",
+    "Vue.js",
+    "Nuxt",
+    "Angular",
+    "Svelte",
+    "Redux",
+    "Vite",
+    "Webpack",
+    "Responsive Website",
+    "Web Design",
+    "UI/UX",
+    "Figma",
     # Backend / frameworks
-    "Node JS", "Express JS", "NestJS", "Django", "Flask", "FastAPI",
-    "Laravel", "CodeIgniter", "Spring Boot", "ASP.NET", "Ruby on Rails",
-    "GraphQL", "REST API", "API Integration", "WebSocket", "Microservices",
+    "Node JS",
+    "Express JS",
+    "NestJS",
+    "Django",
+    "Flask",
+    "FastAPI",
+    "Laravel",
+    "CodeIgniter",
+    "Spring Boot",
+    "ASP.NET",
+    "Ruby on Rails",
+    "GraphQL",
+    "REST API",
+    "API Integration",
+    "WebSocket",
+    "Microservices",
     # Databases
-    "MySQL", "PostgreSQL", "MongoDB", "SQLite", "Redis", "MariaDB",
-    "SQL Server", "Oracle", "Firebase", "Supabase", "Elasticsearch",
-    "DynamoDB", "Prisma", "Mongoose", "Sequelize", "SQLAlchemy",
+    "MySQL",
+    "PostgreSQL",
+    "MongoDB",
+    "SQLite",
+    "Redis",
+    "MariaDB",
+    "SQL Server",
+    "Oracle",
+    "Firebase",
+    "Supabase",
+    "Elasticsearch",
+    "DynamoDB",
+    "Prisma",
+    "Mongoose",
+    "Sequelize",
+    "SQLAlchemy",
     # Automation / scraping / testing
-    "Playwright", "Selenium", "Puppeteer", "BeautifulSoup", "Scrapy",
-    "Web Scraping", "Automation", "Pytest", "Jest", "Cypress", "Postman",
-    "n8n", "Zapier", "Make.com", "UiPath", "Power Automate",
+    "Playwright",
+    "Selenium",
+    "Puppeteer",
+    "BeautifulSoup",
+    "Scrapy",
+    "Web Scraping",
+    "Automation",
+    "Pytest",
+    "Jest",
+    "Cypress",
+    "Postman",
+    "n8n",
+    "Zapier",
+    "Make.com",
+    "UiPath",
+    "Power Automate",
     # Data / AI
-    "Pandas", "NumPy", "Excel", "Power BI", "Tableau", "ETL",
-    "Data Analysis", "Machine Learning", "TensorFlow", "PyTorch",
-    "OpenAI API", "LangChain", "Reporting",
+    "Pandas",
+    "NumPy",
+    "Excel",
+    "Power BI",
+    "Tableau",
+    "ETL",
+    "Data Analysis",
+    "Machine Learning",
+    "TensorFlow",
+    "PyTorch",
+    "OpenAI API",
+    "LangChain",
+    "Reporting",
     # Cloud / DevOps
-    "AWS", "Azure", "Google Cloud", "Docker", "Kubernetes", "Linux",
-    "Nginx", "Apache", "CI/CD", "Jenkins", "GitHub Actions", "Terraform",
-    "Vercel", "Netlify", "Heroku", "DigitalOcean",
+    "AWS",
+    "Azure",
+    "Google Cloud",
+    "Docker",
+    "Kubernetes",
+    "Linux",
+    "Nginx",
+    "Apache",
+    "CI/CD",
+    "Jenkins",
+    "GitHub Actions",
+    "Terraform",
+    "Vercel",
+    "Netlify",
+    "Heroku",
+    "DigitalOcean",
     # Tools / practices
-    "Git", "GitHub (Version Control)", "GitLab", "Bitbucket", "NPM",
-    "Yarn", "Jira", "Trello", "Agile", "Scrum", "WordPress", "Shopify",
-    "Stripe", "Strapi", "Authentication", "Security", "OAuth", "JWT",
-    "Unit Testing", "Debugging",
+    "Git",
+    "GitHub (Version Control)",
+    "GitLab",
+    "Bitbucket",
+    "NPM",
+    "Yarn",
+    "Jira",
+    "Trello",
+    "Agile",
+    "Scrum",
+    "WordPress",
+    "Shopify",
+    "Stripe",
+    "Strapi",
+    "Authentication",
+    "Security",
+    "OAuth",
+    "JWT",
+    "Unit Testing",
+    "Debugging",
     # Communication / office
-    "Microsoft Office", "Google Sheets", "Outlook", "Slack",
+    "Microsoft Office",
+    "Google Sheets",
+    "Outlook",
+    "Slack",
 ]
 
 # ======================================================

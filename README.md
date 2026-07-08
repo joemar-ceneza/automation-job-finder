@@ -1,8 +1,7 @@
-# Resume-to-Job Matcher (JobStreet PH, OnlineJobs.ph, Indeed PH, RemoteOK, Remotive)
+# Resume-to-Job Matcher (JobStreet PH, OnlineJobs.ph)
 
 ## What This Does
-Scrapes job listings from **JobStreet PH**, **OnlineJobs.ph**, and
-**Indeed PH** (plus the **RemoteOK** and **Remotive** remote-job APIs),
+Scrapes job listings from **JobStreet PH** and **OnlineJobs.ph**,
 scores them against your resume's skills using weighted
 keyword matching (skills in the job title count more than skills in the
 description), and saves results to a local SQLite database plus a ranked
@@ -58,9 +57,9 @@ experience, hide weak matches and low salaries, email me the new ones:
 python main.py resume.pdf "python developer" --full-desc --max-years 3 --min-score 15 --min-salary 40000 --email
 ```
 
-Search specific sites only:
+Search one site only:
 ```
-python main.py resume.pdf "python developer" --site jobstreet,onlinejobs
+python main.py resume.pdf "python developer" --site jobstreet
 ```
 
 Browse results and record applications in the dashboard (recommended):
@@ -94,20 +93,17 @@ The pipeline:
 |------|-------|
 | `jobstreet` | JobStreet PH. Supports `--location` and `--full-desc`. |
 | `onlinejobs` | OnlineJobs.ph (remote jobs for PH workers). All listings are work-from-home; salaries are usually **USD** and kept as raw text (not converted into the peso `salary_min/max` columns). Employer names aren't shown on search cards. |
-| `indeed` | Indeed PH. Sits behind Cloudflare anti-bot protection — it worked in testing, but expect **intermittent blocks**; when blocked, the scraper logs a warning, saves the page HTML to `logs/`, and the other sites continue normally. No posting date on search cards. |
-| `remoteok` | RemoteOK global remote jobs via their **public JSON API** — no browser, nothing to break. The free feed only exposes the ~100 most recent listings, so matches per keyword are few. USD salaries kept as raw text. Full descriptions always included. |
-| `remotive` | Remotive global remote jobs via their **public JSON API** with server-side keyword search. Check the location column — some listings are restricted to specific regions. Full descriptions always included. |
 
 ## Options
 
 | Flag           | Default                  | Description                                        |
 |----------------|--------------------------|----------------------------------------------------|
-| `--site`       | all five                 | Comma-separated sites: `jobstreet`, `onlinejobs`, `indeed`, `remoteok`, `remotive` |
+| `--site`       | both                     | Comma-separated sites: `jobstreet`, `onlinejobs`  |
 | `--generate-skills` | —                   | Draft `skills_draft.txt` from your resume PDF, then exit |
 | `--skills`     | `skills.txt`             | Path to your skills keyword file                   |
 | `--pages`      | `2`                      | Search-result pages to scrape per keyword          |
 | `--delay`      | `3.0`                    | Seconds between page requests (also rate-limits detail pages) |
-| `--location`   | off                      | Limit results to a location, e.g. `"Metro Manila"` (JobStreet + Indeed; OnlineJobs is remote-only) |
+| `--location`   | off                      | Limit results to a location, e.g. `"Metro Manila"` (JobStreet only; OnlineJobs is remote-only) |
 | `--full-desc`  | off                      | Visit each job's detail page for the full description (slower, more accurate scoring) |
 | `--max-years`  | off                      | Your years of experience — jobs requiring more are filtered out |
 | `--min-score`  | off                      | Exclude jobs scoring below this percentage from exports |
@@ -193,10 +189,6 @@ to `logs/debug_*_no_results_*.html`. To fix:
    `SELECTORS` dict in `config.py` to match the current attribute
    names/classes
 
-For Indeed specifically, 0 results usually means a Cloudflare block
-(saved as `debug_indeed_blocked_*.html`) — try again later or run fewer
-pages; the other sites are unaffected.
-
 Failed page loads are retried 3 times with exponential backoff before giving
 up, and a screenshot is saved to `logs/screenshots/` on hard failures.
 
@@ -224,9 +216,6 @@ auto-find-job/
 ├── scraper_common.py      # Shared scraper pieces (JobListing, keys, dates)
 ├── scraper_jobstreet.py   # JobStreet PH scraper
 ├── scraper_onlinejobs.py  # OnlineJobs.ph scraper
-├── scraper_indeed.py      # Indeed PH scraper (Cloudflare-aware)
-├── scraper_remoteok.py    # RemoteOK JSON API client
-├── scraper_remotive.py    # Remotive JSON API client
 ├── matcher.py             # Weighted scoring, salary/years extraction, CSV + HTML export
 ├── db_handler.py          # SQLite persistence, status tracking, prune/rescore
 ├── email_handler.py       # Gmail SMTP digest of new matches

@@ -179,9 +179,6 @@ def fetch_jobs(job_keys: list[str]) -> list[dict]:
 _JOB_URL_ID_PATTERNS = [
     ("jobstreet", re.compile(r"jobstreet\.com/job/(\d+)")),
     ("onlinejobs", re.compile(r"onlinejobs\.ph/jobseekers/job/.*-(\d+)/?(?:$|\?)")),
-    ("indeed", re.compile(r"indeed\.com/viewjob\?jk=([0-9a-f]+)")),
-    ("remoteok", re.compile(r"remoteok\.com/remote-jobs/.*?(\d+)/?(?:$|\?)")),
-    ("remotive", re.compile(r"remotive\.com/remote-jobs/.*-(\d+)/?(?:$|\?)")),
 ]
 
 

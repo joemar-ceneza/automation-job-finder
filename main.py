@@ -16,25 +16,20 @@ import logging
 import os
 from dataclasses import asdict
 from datetime import date, datetime
+from logging.handlers import RotatingFileHandler
 
 import config
 import db_handler
 import email_handler
 import matcher
 import resume_parser
-import scraper_indeed
 import scraper_jobstreet
 import scraper_onlinejobs
-import scraper_remoteok
-import scraper_remotive
 
 # Site name -> scraper module. Each module exposes run_scraper().
 SITE_SCRAPERS = {
     "jobstreet": scraper_jobstreet,
     "onlinejobs": scraper_onlinejobs,
-    "indeed": scraper_indeed,
-    "remoteok": scraper_remoteok,
-    "remotive": scraper_remotive,
 }
 
 
@@ -42,7 +37,7 @@ SITE_SCRAPERS = {
 # SETUP HELPERS
 # ======================================================
 def _setup_logging() -> None:
-    """Creates required folders and configures console + file logging."""
+    """Creates required folders and configures console + rotating file logging."""
     os.makedirs(config.LOGS_DIR, exist_ok=True)
     os.makedirs(config.SCREENSHOTS_DIR, exist_ok=True)
     os.makedirs(config.OUTPUT_DIR, exist_ok=True)
@@ -50,7 +45,9 @@ def _setup_logging() -> None:
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
         handlers=[
-            logging.FileHandler(config.LOG_FILE, encoding="utf-8"),
+            RotatingFileHandler(config.LOG_FILE, encoding="utf-8",
+                                maxBytes=config.LOG_MAX_BYTES,
+                                backupCount=config.LOG_BACKUP_COUNT),
             logging.StreamHandler(),
         ],
     )
