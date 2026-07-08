@@ -1,9 +1,44 @@
-# Edit this file to match YOUR actual resume skills.
-# One skill/keyword per line. Lines starting with # are ignored.
-# These are just starter examples based on common compliance/automation roles.
+# Draft skills generated from your resume — review before using!
+# Keep the lines that truly reflect your skills, delete the rest,
+# then replace skills.txt with this file.
 
 Python
+JavaScript ES6
+TypeScript
+PHP
+Go
+SQL
+Bash Command Line
+R
+HTML 5
+CSS 3
+Sass
+Bootstrap 5
+Tailwind CSS
+jQuery
+React JS
+Next JS
+Responsive Website
+Web Design
+Node JS
+Express JS
+REST API
+API Integration
+MySQL
+PostgreSQL
+MongoDB
+Prisma
+Mongoose
 Playwright
 Automation
-Web Scraping
-Data Analysis
+Reporting
+Vercel
+Netlify
+Git
+GitHub (Version Control)
+NPM
+Stripe
+Strapi
+Authentication
+Security
+Debugging
