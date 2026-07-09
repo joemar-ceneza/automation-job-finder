@@ -19,7 +19,7 @@ SCREENSHOTS_DIR = os.path.join(LOGS_DIR, "screenshots")
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 LOG_FILE = os.path.join(LOGS_DIR, "automation.log")
 LOG_MAX_BYTES = 5 * 1024 * 1024  # rotate automation.log at 5 MB
-LOG_BACKUP_COUNT = 3             # keep automation.log.1 … .3
+LOG_BACKUP_COUNT = 3  # keep automation.log.1 … .3
 DB_PATH = os.path.join(OUTPUT_DIR, "jobs.db")
 DEFAULT_SKILLS_FILE = os.path.join(BASE_DIR, "skills.txt")
 DEFAULT_SKILLS_DRAFT = os.path.join(BASE_DIR, "skills_draft.txt")
@@ -44,6 +44,14 @@ DETAIL_WAIT_TIMEOUT_MS = 10000
 # Sites searched when --site isn't given. Each name maps to a
 # scraper_<name>.py module with a run_scraper() entry point.
 DEFAULT_SITES = ["jobstreet", "onlinejobs"]
+
+# Companies whose listings are skipped entirely — never scored, stored, or
+# shown. Case-insensitive substring match on the company name, so "acme"
+# also blocks "ACME Recruitment Inc". Note: OnlineJobs.ph hides employer
+# names on search cards, so those listings can't be blocked by company.
+BLOCKLISTED_COMPANIES: list[str] = [
+    # "Example Recruitment Agency",
+]
 
 JOBSTREET_BASE_URL = "https://ph.jobstreet.com"
 ONLINEJOBS_BASE_URL = "https://www.onlinejobs.ph"

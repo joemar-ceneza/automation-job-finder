@@ -23,6 +23,7 @@ import db_handler
 import email_handler
 import matcher
 import resume_parser
+import scraper_common
 import scraper_jobstreet
 import scraper_onlinejobs
 
@@ -218,6 +219,7 @@ def main() -> None:
         except Exception as e:
             logging.error("[%s] Scraper failed, continuing with other "
                           "sites: %s", site, e)
+    jobs = scraper_common.filter_blocklisted(jobs)
     if not jobs:
         logging.error("No jobs scraped from any site. Inspect the debug HTML "
                       "saved in %s and update SELECTORS in config.py if a "

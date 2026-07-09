@@ -171,6 +171,28 @@ just refresh the dashboard page.
   and are automatically un-archived if they reappear in search results.
 - Inspect the db anytime: `sqlite3 output/jobs.db "SELECT title, score_percent, status FROM jobs ORDER BY score_percent DESC LIMIT 20"`
 
+## Blocking companies
+Add company names to `BLOCKLISTED_COMPANIES` in `config.py` to skip their
+listings entirely — they are never scored, stored, or shown. Matching is a
+case-insensitive substring, so `"acme"` also blocks "ACME Recruitment Inc".
+OnlineJobs.ph hides employer names on search cards, so its listings can't
+be blocked by company.
+
+## Scheduled daily runs
+`run_daily.bat` runs the full pipeline with absolute paths, ready for
+Windows Task Scheduler. A task named **"Automation Job Finder Daily"**
+runs it every day at 8:00 AM (edit the keywords/flags inside the .bat to
+change what it searches). Useful commands:
+```
+schtasks /Run /TN "Automation Job Finder Daily"                # run it right now
+schtasks /Change /TN "Automation Job Finder Daily" /ST 06:30   # change the time
+schtasks /Delete /TN "Automation Job Finder Daily" /F          # remove the task
+```
+Each run's console output is written to `logs\last_scheduled_run.log`
+(overwritten per run); the permanent history is `logs/automation.log`.
+The task only runs while you are logged in, and won't start on battery
+power (Windows default).
+
 ## Email digest
 `--email` sends the run's new matches (title, score, salary, matched skills,
 links) to `EMAIL_RECIPIENT` via Gmail SMTP. Configure `.env` first (see
@@ -207,8 +229,9 @@ up, and a screenshot is saved to `logs/screenshots/` on hard failures.
 
 ## Project Structure
 ```
-auto-find-job/
+automation-job-finder/
 ├── main.py                # Entry point — orchestrates the full workflow
+├── run_daily.bat          # Task Scheduler runner (daily 8:00 AM)
 ├── dashboard.py           # Streamlit dashboard (streamlit run dashboard.py)
 ├── config.py              # All settings, per-site selectors, weights, paths
 ├── utils.py               # Generic retry helper (exponential backoff)

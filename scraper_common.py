@@ -82,6 +82,32 @@ def parse_relative_date(raw_text: str) -> str:
 
 
 # ======================================================
+# COMPANY BLOCKLIST
+# ======================================================
+def filter_blocklisted(listings: list[JobListing]) -> list[JobListing]:
+    """
+    Drops listings from companies in config.BLOCKLISTED_COMPANIES
+    (case-insensitive substring match). Listings without a company name
+    (e.g. OnlineJobs.ph search cards) are always kept.
+    """
+    if not config.BLOCKLISTED_COMPANIES:
+        return listings
+    blocklist = [name.lower() for name in config.BLOCKLISTED_COMPANIES]
+    kept = []
+    for listing in listings:
+        company_lower = (listing.company or "").lower()
+        if company_lower and any(blocked in company_lower for blocked in blocklist):
+            logging.info("Blocklisted company — skipping '%s' @ %s",
+                         listing.title, listing.company)
+            continue
+        kept.append(listing)
+    dropped = len(listings) - len(kept)
+    if dropped:
+        logging.info("Blocklist removed %d listing(s).", dropped)
+    return kept
+
+
+# ======================================================
 # DEBUG SNAPSHOTS
 # ======================================================
 def save_debug_html(page, label: str) -> str:

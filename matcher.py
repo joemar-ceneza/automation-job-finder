@@ -6,10 +6,8 @@ teaser/description), extracts required years of experience, normalizes
 advertised salaries, detects work arrangement, and exports ranked results
 to CSV and an HTML report.
 """
-import argparse
 import csv
 import html
-import json
 import logging
 import os
 import re
@@ -272,28 +270,3 @@ def write_html_report(ranked_jobs: list[dict], out_path: str,
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(document)
     logging.info("Wrote HTML report to %s", out_path)
-
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s - %(levelname)s - %(message)s")
-
-    parser = argparse.ArgumentParser(description="Rank scraped jobs against resume skills")
-    parser.add_argument("jobs_json", help="Path to jobs_raw.json from scraper.py")
-    parser.add_argument("matched_skills_txt", help="Path to a text file, one matched skill per line")
-    parser.add_argument("--max-years", type=int, default=None,
-                        help="Filter out jobs requiring more years of experience than this")
-    parser.add_argument("--out", default=config.DEFAULT_OUTPUT_CSV, help="Output CSV path")
-    args = parser.parse_args()
-
-    with open(args.jobs_json, "r", encoding="utf-8") as f:
-        loaded_jobs = json.load(f)
-    with open(args.matched_skills_txt, "r", encoding="utf-8") as f:
-        skills = [line.strip() for line in f if line.strip()]
-
-    ranked_rows = rank_jobs(loaded_jobs, skills, max_experience_years=args.max_years)
-    write_csv(ranked_rows, args.out)
-
-    logging.info("Ranked %d jobs. Top 5:", len(ranked_rows))
-    for row in ranked_rows[:5]:
-        logging.info("  %s%% - %s @ %s", row["score_percent"], row["title"], row["company"])
