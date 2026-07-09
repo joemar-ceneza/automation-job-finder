@@ -6,39 +6,36 @@ Python
 JavaScript ES6
 TypeScript
 PHP
-Go
 SQL
-Bash Command Line
-R
 HTML 5
 CSS 3
-Sass
-Bootstrap 5
+React.js
+Next.js
 Tailwind CSS
+Bootstrap 5
+Sass
 jQuery
-React JS
-Next JS
-Responsive Website
-Web Design
-Node JS
-Express JS
-REST API
-API Integration
+Responsive Web Design
+Node.js
+Express.js
+REST API development
+API integration
+Authentication and Security
+MongoDB
 MySQL
 PostgreSQL
-MongoDB
-Prisma
 Mongoose
+Prisma
 Playwright
-Automation
-Reporting
-Vercel
-Netlify
+Python scripting
+Data extraction
+Process automation
 Git
-GitHub (Version Control)
+GitHub
 NPM
-Stripe
+Bash command line
 Strapi
-Authentication
-Security
-Debugging
+Stripe
+Netlify
+GitHub Pages
+MongoDB Atlas
