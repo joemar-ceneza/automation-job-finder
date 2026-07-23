@@ -20,6 +20,7 @@ from logging.handlers import RotatingFileHandler
 
 import config
 import db_handler
+import dedupe
 import email_handler
 import matcher
 import resume_parser
@@ -337,6 +338,7 @@ def main() -> None:
     db_handler.insert_jobs(new_rows)
     db_handler.mark_seen(list(seen_keys))
     db_handler.replace_job_skills(skill_extractor.extract_for_rows(new_rows))
+    db_handler.mark_duplicates(dedupe.find_duplicates(db_handler.fetch_all_jobs()))
 
     # Step 6: Export ranked CSV + HTML report
     _log_step(6, "Exporting ranked CSV and HTML report")

@@ -55,6 +55,22 @@ BLOCKLISTED_COMPANIES: list[str] = [
     # "Example Recruitment Agency",
 ]
 
+# Job titles containing any of these are skipped. Matched as whole words, so
+# "lead" blocks "Lead Developer" but not "Leadership Trainee", and "manager"
+# does not block "Management Trainee". This cuts far more noise than the
+# company blocklist, because every site shows a title.
+BLOCKLISTED_TITLE_KEYWORDS: list[str] = [
+    # "senior", "lead", "manager", "intern", "sales", ".net",
+]
+
+# Company names that identify nobody. JobStreet uses "Private Advertiser" for
+# any employer posting anonymously, so treating it as a company would merge
+# unrelated firms into one. Duplicate detection ignores these entirely.
+PLACEHOLDER_COMPANIES = {
+    "private advertiser", "confidential", "anonymous", "undisclosed",
+    "recruitment agency", "n a",
+}
+
 JOBSTREET_BASE_URL = "https://ph.jobstreet.com"
 ONLINEJOBS_BASE_URL = "https://www.onlinejobs.ph"
 

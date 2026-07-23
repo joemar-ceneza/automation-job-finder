@@ -42,9 +42,11 @@ def _load_jobs(include_archived: bool) -> pd.DataFrame:
 
 
 def _apply_filters(frame: pd.DataFrame, search_text: str, statuses: list[str],
-                   sources: list[str], min_score: float,
-                   min_salary: int) -> pd.DataFrame:
+                   sources: list[str], min_score: float, min_salary: int,
+                   hide_duplicates: bool = True) -> pd.DataFrame:
     """Applies the sidebar filters to the jobs DataFrame."""
+    if hide_duplicates and "duplicate_of" in frame.columns:
+        frame = frame[frame["duplicate_of"].isna()]
     if search_text:
         needle = search_text.lower()
         frame = frame[
@@ -82,6 +84,10 @@ def _render_sidebar(frame: pd.DataFrame) -> dict:
         "min_salary": st.sidebar.number_input(
             "Minimum salary (PHP/month, 0 = off)", min_value=0, step=5000),
         "include_archived": st.sidebar.checkbox("Include archived jobs"),
+        "hide_duplicates": st.sidebar.checkbox(
+            "Hide repeat postings", value=True,
+            help="Same role posted more than once by the same employer. "
+                 "Hidden, never deleted — a repost can mean it is still open."),
     }
 
 
@@ -303,8 +309,21 @@ def run_dashboard() -> None:
 
     filtered = _apply_filters(frame, filters["search_text"],
                               filters["statuses"], filters["sources"],
-                              filters["min_score"], filters["min_salary"])
+                              filters["min_score"], filters["min_salary"],
+                              filters["hide_duplicates"])
     _render_metrics(filtered)
+
+    if filters["hide_duplicates"]:
+        # Compare against the same filters minus the duplicate rule, so the
+        # count reflects duplicates only and not every other exclusion.
+        with_duplicates = _apply_filters(
+            frame, filters["search_text"], filters["statuses"],
+            filters["sources"], filters["min_score"], filters["min_salary"],
+            hide_duplicates=False)
+        hidden = len(with_duplicates) - len(filtered)
+        if hidden > 0:
+            st.caption(f"{hidden} repeat posting(s) hidden — untick "
+                       "*Hide repeat postings* in the sidebar to see them.")
 
     matches_tab, board_tab, analytics_tab = st.tabs(
         ["Matches", "Board", "Skill demand"])

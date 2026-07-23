@@ -92,6 +92,7 @@ _MIGRATED_COLUMNS = {
     "source": "TEXT",
     "status_changed_at": "TEXT",
     "notes": "TEXT",
+    "duplicate_of": "TEXT",
 }
 
 
@@ -432,6 +433,25 @@ def skill_demand(category: str | None = None, limit: int = 20) -> list[dict]:
     with closing(_connect()) as connection:
         rows = connection.execute(" ".join(query), params).fetchall()
     return [dict(row) for row in rows]
+
+
+def mark_duplicates(duplicates: dict[str, str]) -> int:
+    """
+    Records which listings duplicate which. Clears any previous marking first
+    so a repost that turns out to be distinct is not left flagged forever.
+    Returns the number of listings flagged.
+    """
+    with closing(_connect()) as connection, connection:
+        connection.execute("UPDATE jobs SET duplicate_of = NULL "
+                           "WHERE duplicate_of IS NOT NULL")
+        if duplicates:
+            connection.executemany(
+                "UPDATE jobs SET duplicate_of = ? WHERE job_key = ?",
+                [(keeper, duplicate)
+                 for duplicate, keeper in duplicates.items()])
+    if duplicates:
+        logging.info("Flagged %d listing(s) as duplicates.", len(duplicates))
+    return len(duplicates)
 
 
 def total_active_jobs() -> int:

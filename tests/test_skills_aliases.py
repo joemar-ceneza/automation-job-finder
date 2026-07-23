@@ -71,6 +71,19 @@ def test_aliases_are_not_case_only_variants():
             seen.add(alias.lower())
 
 
+def test_skills_ending_in_symbols_match():
+    """
+    Regression: \\b after '+' or '#' is never a boundary, so 'C++' and 'C#'
+    silently matched nothing at all while every other skill worked.
+    """
+    assert resume_parser.skill_in_text("C++", "c++ developer wanted")
+    assert resume_parser.skill_in_text("C#", "strong c# and asp.net skills")
+    assert resume_parser.skill_in_text("ASP.NET", "asp.net core experience")
+    # ...without matching a longer word that merely starts the same way
+    assert not resume_parser.skill_in_text("Go", "golang developer wanted")
+    assert not resume_parser.skill_in_text("C#", "c#sharp-ish nonsense")
+
+
 def test_renamed_skills_actually_match_job_text(skills):
     """The regression itself: React.js must match an ad that says 'ReactJS'."""
     cases = [

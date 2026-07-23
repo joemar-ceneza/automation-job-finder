@@ -82,28 +82,64 @@ def parse_relative_date(raw_text: str) -> str:
 
 
 # ======================================================
-# COMPANY BLOCKLIST
+# BLOCKLISTS
 # ======================================================
+def _blocked_company(listing: JobListing, blocklist: list[str]) -> str | None:
+    """The blocklisted company name this listing matches, if any."""
+    company_lower = (listing.company or "").lower()
+    if not company_lower:
+        return None  # OnlineJobs.ph hides employers — nothing to match on
+    return next((name for name in blocklist if name in company_lower), None)
+
+
+def _blocked_title_keyword(listing: JobListing,
+                           keywords: list[str]) -> str | None:
+    """
+    The blocklisted keyword this title contains, if any. Matched as a whole
+    word so "lead" does not block "Leadership" and "manager" does not block
+    "Management Trainee".
+    """
+    title_lower = (listing.title or "").lower()
+    for keyword in keywords:
+        # (?<!\w)/(?!\w) rather than \b: a keyword that starts or ends with a
+        # non-word character (".net", "c++") has no word boundary there, so \b
+        # would never match it.
+        if re.search(rf"(?<!\w){re.escape(keyword)}(?!\w)", title_lower):
+            return keyword
+    return None
+
+
 def filter_blocklisted(listings: list[JobListing]) -> list[JobListing]:
     """
-    Drops listings from companies in config.BLOCKLISTED_COMPANIES
-    (case-insensitive substring match). Listings without a company name
-    (e.g. OnlineJobs.ph search cards) are always kept.
+    Drops listings whose company is in config.BLOCKLISTED_COMPANIES or whose
+    title contains a config.BLOCKLISTED_TITLE_KEYWORDS entry. Listings with no
+    company name are only ever filtered on their title.
     """
-    if not config.BLOCKLISTED_COMPANIES:
+    companies = [name.lower() for name in config.BLOCKLISTED_COMPANIES]
+    keywords = [word.lower() for word in config.BLOCKLISTED_TITLE_KEYWORDS]
+    if not companies and not keywords:
         return listings
-    blocklist = [name.lower() for name in config.BLOCKLISTED_COMPANIES]
-    kept = []
+
+    kept, by_company, by_title = [], 0, 0
     for listing in listings:
-        company_lower = (listing.company or "").lower()
-        if company_lower and any(blocked in company_lower for blocked in blocklist):
-            logging.info("Blocklisted company — skipping '%s' @ %s",
-                         listing.title, listing.company)
+        company = _blocked_company(listing, companies)
+        if company:
+            logging.debug("Blocklisted company '%s' — skipping '%s'",
+                          company, listing.title)
+            by_company += 1
+            continue
+        keyword = _blocked_title_keyword(listing, keywords)
+        if keyword:
+            logging.debug("Blocklisted title keyword '%s' — skipping '%s'",
+                          keyword, listing.title)
+            by_title += 1
             continue
         kept.append(listing)
-    dropped = len(listings) - len(kept)
-    if dropped:
-        logging.info("Blocklist removed %d listing(s).", dropped)
+
+    if by_company or by_title:
+        logging.info("Blocklist removed %d listing(s): %d by company, "
+                     "%d by title keyword.", by_company + by_title,
+                     by_company, by_title)
     return kept
 
 

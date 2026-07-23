@@ -46,9 +46,13 @@ def skill_in_text(skill: str, text_lower: str) -> bool:
     """
     Case-insensitive whole-word/phrase match of a skill — or any of its
     aliases from config.SKILL_ALIASES — in already-lowercased text.
+
+    Boundaries use (?<!\\w)/(?!\\w) rather than \\b. A skill ending in a
+    non-word character has no word boundary there, so \\b silently never
+    matched "C++" or "C#" while appearing to work for everything else.
     """
     for term in [skill] + config.SKILL_ALIASES.get(skill, []):
-        pattern = r"\b" + re.escape(term.lower()) + r"\b"
+        pattern = r"(?<!\w)" + re.escape(term.lower()) + r"(?!\w)"
         if re.search(pattern, text_lower):
             return True
     return False
