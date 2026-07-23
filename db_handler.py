@@ -353,6 +353,15 @@ def record_stage(key_or_url: str, stage: str, note: str | None = None) -> bool:
     return True
 
 
+def get_job(key_or_url: str) -> dict | None:
+    """One stored job by job_key or by any of its site URLs."""
+    job_key = _normalize_job_key(key_or_url)
+    with closing(_connect()) as connection:
+        row = connection.execute(
+            "SELECT * FROM jobs WHERE job_key = ?", (job_key,)).fetchone()
+    return dict(row) if row else None
+
+
 def stage_history(job_key: str) -> list[dict]:
     """Every recorded stage change for a job, oldest first."""
     with closing(_connect()) as connection:

@@ -21,8 +21,11 @@ from logging.handlers import RotatingFileHandler
 import config
 import db_handler
 import dedupe
+import documents
 import email_handler
 import matcher
+import optimizer
+import resume_model
 import resume_import
 import resume_parser
 import scraper_common
@@ -107,6 +110,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--import-resume", action="store_true",
                         help="Convert your resume PDF into an editable master "
                              "resume at master_resume.md, then exit")
+    parser.add_argument("--tailor", metavar="JOB",
+                        help="Tailor your master resume to a job (job_key or "
+                             "URL) and export it, then exit")
+    parser.add_argument("--formats", default="md,docx,pdf",
+                        help="Formats for --tailor: " +
+                             ", ".join(config.DOCUMENT_FORMATS))
     parser.add_argument("--backup", action="store_true",
                         help="Copy the database to output/backups/, then exit")
     parser.add_argument("--calibrate", action="store_true",
@@ -128,7 +137,7 @@ def _parse_args() -> argparse.Namespace:
                      "python main.py resume.pdf --import-resume")
     maintenance_only = (args.set_status or args.generate_skills
                         or args.backup or args.calibrate or args.stalled
-                        or args.import_resume
+                        or args.import_resume or args.tailor
                         or (args.prune_days is not None and not args.keyword))
     if not maintenance_only and (not args.resume_pdf or not args.keyword):
         parser.error("resume_pdf and keyword are required (unless using "
@@ -224,6 +233,44 @@ def _run_import_resume(args: argparse.Namespace) -> None:
                  config.MASTER_RESUME_FILE)
 
 
+def _run_tailor(args: argparse.Namespace) -> None:
+    """Tailors the master resume to one job and exports it."""
+    db_handler.init_db()
+    job = db_handler.get_job(args.tailor)
+    if job is None:
+        logging.error("No job matching '%s' in the database.", args.tailor)
+        return
+    if not os.path.exists(config.MASTER_RESUME_FILE):
+        logging.error("No master resume at %s. Create one first: "
+                      "python main.py <resume.pdf> --import-resume",
+                      config.MASTER_RESUME_FILE)
+        return
+
+    result = optimizer.optimise(resume_model.load(config.MASTER_RESUME_FILE),
+                                job)
+
+    logging.info("=" * 70)
+    logging.info("%s @ %s", job["title"], job.get("company") or "unknown")
+    logging.info("ATS score: %.1f / 100", result.ats_score)
+    logging.info("=" * 70)
+    for check in result.checks:
+        marker = "ok  " if check.passed else "    "
+        logging.info("  %s %-24s %5.1f/%-4.0f %s", marker, check.name,
+                     check.points, check.max_points, check.detail)
+    logging.info("")
+    for change in result.changes:
+        logging.info("  - %s", change)
+
+    stem = documents.slugify(f"{job['title']}-{job.get('company') or ''}")
+    for fmt in [part.strip().lower() for part in args.formats.split(",")
+                if part.strip()]:
+        if fmt not in config.DOCUMENT_FORMATS:
+            logging.warning("Skipping unknown format '%s'.", fmt)
+            continue
+        path = os.path.join(config.DOCUMENTS_DIR, f"{stem}.{fmt}")
+        documents.write(result.resume, path, fmt)
+
+
 def _run_calibrate() -> None:
     """Suggests a TARGET_MATCH_SKILLS value from the stored corpus."""
     db_handler.init_db()
@@ -277,6 +324,9 @@ def main() -> None:
         return
     if args.import_resume:
         _run_import_resume(args)
+        return
+    if args.tailor:
+        _run_tailor(args)
         return
     if args.backup:
         db_handler.backup_database(reason="manual")

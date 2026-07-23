@@ -29,6 +29,8 @@ DEFAULT_SKILLS_DRAFT = os.path.join(BASE_DIR, "skills_draft.txt")
 # The master resume: structured Markdown that is the source of truth once
 # imported. Everything downstream reads this, never the PDF.
 MASTER_RESUME_FILE = os.path.join(BASE_DIR, "master_resume.md")
+DOCUMENTS_DIR = os.path.join(OUTPUT_DIR, "documents")
+DOCUMENT_FORMATS = ["md", "docx", "pdf"]
 
 # Sections pushed to the top when tailoring a resume to a job. Anything not
 # listed keeps its relative position after these.
