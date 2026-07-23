@@ -13,6 +13,7 @@ from contextlib import closing
 from datetime import datetime, timedelta
 
 import config
+import stages
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -46,6 +47,38 @@ CREATE TABLE IF NOT EXISTS meta (
 )
 """
 
+# One row per skill found in one advertisement — the source for all demand
+# analytics. Rebuilt whenever a job is (re)scored.
+_JOB_SKILLS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS job_skills (
+    job_key   TEXT NOT NULL,
+    skill     TEXT NOT NULL,
+    category  TEXT,
+    in_title  INTEGER DEFAULT 0,
+    PRIMARY KEY (job_key, skill)
+)
+"""
+
+# Append-only history of every stage change. jobs.status holds the current
+# stage as a denormalised head so list views need no correlated subquery.
+_EVENTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS application_events (
+    id          INTEGER PRIMARY KEY,
+    job_key     TEXT NOT NULL,
+    stage       TEXT NOT NULL,
+    note        TEXT,
+    occurred_at TEXT NOT NULL
+)
+"""
+
+_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_job_skills_skill ON job_skills(skill)",
+    "CREATE INDEX IF NOT EXISTS idx_job_skills_cat   ON job_skills(category)",
+    "CREATE INDEX IF NOT EXISTS idx_events_job       ON application_events(job_key)",
+    "CREATE INDEX IF NOT EXISTS idx_jobs_status      ON jobs(status)",
+    "CREATE INDEX IF NOT EXISTS idx_jobs_score       ON jobs(score_percent)",
+)
+
 # Columns added after the first release — migrated in init_db() so existing
 # databases keep working. Maps column name -> ALTER TABLE type/default.
 _MIGRATED_COLUMNS = {
@@ -57,6 +90,8 @@ _MIGRATED_COLUMNS = {
     "status": "TEXT DEFAULT 'new'",
     "archived": "INTEGER DEFAULT 0",
     "source": "TEXT",
+    "status_changed_at": "TEXT",
+    "notes": "TEXT",
 }
 
 
@@ -123,6 +158,10 @@ def init_db() -> None:
     with closing(_connect()) as connection, connection:
         connection.execute(_SCHEMA)
         connection.execute(_META_SCHEMA)
+        connection.execute(_JOB_SKILLS_SCHEMA)
+        connection.execute(_EVENTS_SCHEMA)
+        for statement in _INDEXES:
+            connection.execute(statement)
 
     # Work out whether anything will be altered BEFORE altering it, so the
     # backup captures the pre-migration state.
@@ -275,6 +314,131 @@ def update_statuses(status_by_key: dict[str, str]) -> int:
         )
     logging.info("Updated status of %d jobs.", cursor.rowcount)
     return cursor.rowcount
+
+
+# ======================================================
+# PUBLIC API — APPLICATION LIFECYCLE
+# ======================================================
+def record_stage(key_or_url: str, stage: str, note: str | None = None) -> bool:
+    """
+    Moves a job to a new stage, appending to its history and updating the
+    denormalised head on jobs. Refuses illegal transitions.
+    Returns False when the job is unknown or the move is not allowed.
+    """
+    job_key = _normalize_job_key(key_or_url)
+    now = _now()
+    with closing(_connect()) as connection, connection:
+        row = connection.execute(
+            "SELECT status FROM jobs WHERE job_key = ?", (job_key,)).fetchone()
+        if row is None:
+            logging.error("No job with key '%s' in the database.", job_key)
+            return False
+
+        current = stages.parse(row["status"])
+        target = stages.parse(stage)
+        if not stages.can_move(current, target):
+            allowed = ", ".join(stages.allowed_moves(current)) or "nothing"
+            logging.error("Cannot move '%s' from %s to %s. Allowed: %s.",
+                          job_key, current, target, allowed)
+            return False
+
+        connection.execute(
+            "UPDATE jobs SET status = ?, status_changed_at = ? WHERE job_key = ?",
+            (str(target), now, job_key))
+        connection.execute(
+            "INSERT INTO application_events (job_key, stage, note, occurred_at) "
+            "VALUES (?, ?, ?, ?)", (job_key, str(target), note, now))
+    logging.info("%s moved from %s to %s.", job_key, current, target)
+    return True
+
+
+def stage_history(job_key: str) -> list[dict]:
+    """Every recorded stage change for a job, oldest first."""
+    with closing(_connect()) as connection:
+        rows = connection.execute(
+            "SELECT stage, note, occurred_at FROM application_events "
+            "WHERE job_key = ? ORDER BY occurred_at, id", (job_key,)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def stalled_jobs() -> list[dict]:
+    """
+    Jobs awaiting an employer reply for longer than GHOSTED_AFTER_DAYS.
+    Surfaced as a suggestion — nobody remembers to record a silence.
+    """
+    cutoff = (datetime.now() - timedelta(days=config.GHOSTED_AFTER_DAYS)
+              ).strftime("%Y-%m-%d %H:%M:%S")
+    awaiting = tuple(str(stage) for stage in stages.AWAITING_REPLY)
+    placeholders = ",".join("?" for _ in awaiting)
+    with closing(_connect()) as connection:
+        rows = connection.execute(
+            f"""SELECT job_key, title, company, status, status_changed_at
+                FROM jobs
+                WHERE archived = 0 AND status IN ({placeholders})
+                  AND COALESCE(status_changed_at, first_seen) < ?
+                ORDER BY status_changed_at""",
+            (*awaiting, cutoff)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def set_note(job_key: str, note: str) -> None:
+    """Stores the free-text note shown on the job's detail panel."""
+    with closing(_connect()) as connection, connection:
+        connection.execute("UPDATE jobs SET notes = ? WHERE job_key = ?",
+                           (note, job_key))
+
+
+# ======================================================
+# PUBLIC API — SKILL DEMAND
+# ======================================================
+def replace_job_skills(extracted: list[tuple[str, str, str, int]]) -> None:
+    """
+    Rewrites job_skills for the jobs represented in `extracted`.
+    Deletes first so a rescore never leaves stale mentions behind.
+    """
+    if not extracted:
+        return
+    job_keys = sorted({row[0] for row in extracted})
+    placeholders = ",".join("?" for _ in job_keys)
+    with closing(_connect()) as connection, connection:
+        connection.execute(
+            f"DELETE FROM job_skills WHERE job_key IN ({placeholders})",
+            job_keys)
+        connection.executemany(
+            "INSERT OR REPLACE INTO job_skills "
+            "(job_key, skill, category, in_title) VALUES (?, ?, ?, ?)",
+            extracted)
+    logging.info("Stored %d skill mentions for %d jobs.",
+                 len(extracted), len(job_keys))
+
+
+def skill_demand(category: str | None = None, limit: int = 20) -> list[dict]:
+    """
+    How many active jobs mention each skill, most in demand first.
+    Optionally restricted to one category (language, framework, ...).
+    """
+    query = ["""SELECT js.skill, js.category,
+                       COUNT(DISTINCT js.job_key) AS demand,
+                       SUM(js.in_title) AS in_title
+                FROM job_skills js
+                JOIN jobs j ON j.job_key = js.job_key
+                WHERE j.archived = 0"""]
+    params: list[object] = []
+    if category:
+        query.append("AND js.category = ?")
+        params.append(category)
+    query.append("GROUP BY js.skill, js.category ORDER BY demand DESC LIMIT ?")
+    params.append(limit)
+    with closing(_connect()) as connection:
+        rows = connection.execute(" ".join(query), params).fetchall()
+    return [dict(row) for row in rows]
+
+
+def total_active_jobs() -> int:
+    """Denominator for demand percentages."""
+    with closing(_connect()) as connection:
+        return connection.execute(
+            "SELECT COUNT(*) FROM jobs WHERE archived = 0").fetchone()[0]
 
 
 # ======================================================

@@ -26,6 +26,8 @@ import resume_parser
 import scraper_common
 import scraper_jobstreet
 import scraper_onlinejobs
+import skill_extractor
+import stages
 
 # Site name -> scraper module. Each module exposes run_scraper().
 SITE_SCRAPERS = {
@@ -88,9 +90,14 @@ def _parse_args() -> argparse.Namespace:
                         help="Re-score all stored jobs against the current skill list")
     parser.add_argument("--prune-days", type=int, default=None,
                         help="Archive jobs not seen in this many days (excluded from exports)")
-    parser.add_argument("--set-status", nargs=2, metavar=("JOB", "STATUS"),
-                        help="Record a job's status (interested/applied/rejected/...) "
-                             "by job_key or URL, then exit")
+    parser.add_argument("--set-status", nargs=2, metavar=("JOB", "STAGE"),
+                        help="Move a job to a stage by job_key or URL, then "
+                             "exit. Stages: " + ", ".join(stages.BOARD_ORDER))
+    parser.add_argument("--note", default=None,
+                        help="Note to attach to a --set-status change")
+    parser.add_argument("--stalled", action="store_true",
+                        help="List applications with no reply in "
+                             f"{config.GHOSTED_AFTER_DAYS}+ days, then exit")
     parser.add_argument("--generate-skills", action="store_true",
                         help="Draft a skill list from your resume PDF into "
                              "skills_draft.txt (review it, then replace "
@@ -112,7 +119,7 @@ def _parse_args() -> argparse.Namespace:
         parser.error("--generate-skills needs your resume PDF, e.g. "
                      "python main.py resume.pdf --generate-skills")
     maintenance_only = (args.set_status or args.generate_skills
-                        or args.backup or args.calibrate
+                        or args.backup or args.calibrate or args.stalled
                         or (args.prune_days is not None and not args.keyword))
     if not maintenance_only and (not args.resume_pdf or not args.keyword):
         parser.error("resume_pdf and keyword are required (unless using "
@@ -159,13 +166,30 @@ def _apply_export_filters(rows: list[dict], min_score: float | None,
 # MAINTENANCE MODE (no scraping)
 # ======================================================
 def _run_maintenance(args: argparse.Namespace) -> None:
-    """Handles --set-status / standalone --prune-days, then returns."""
+    """Handles --set-status / --stalled / standalone --prune-days."""
     db_handler.init_db()
     if args.set_status:
-        job, status = args.set_status
-        db_handler.set_status(job, status)
+        job, stage = args.set_status
+        db_handler.record_stage(job, stage, note=args.note)
+    if args.stalled:
+        _report_stalled()
     if args.prune_days is not None:
         db_handler.prune_stale(args.prune_days)
+
+
+def _report_stalled() -> None:
+    """Lists applications the employer has gone quiet on."""
+    waiting = db_handler.stalled_jobs()
+    if not waiting:
+        logging.info("Nothing has been waiting longer than %d days.",
+                     config.GHOSTED_AFTER_DAYS)
+        return
+    logging.info("%d application(s) with no reply in %d+ days — mark them "
+                 "ghosted if you have given up:", len(waiting),
+                 config.GHOSTED_AFTER_DAYS)
+    for job in waiting:
+        logging.info("  [%s] %s @ %s (since %s)", job["status"], job["title"],
+                     job["company"] or "unknown", job["status_changed_at"])
 
 
 def _run_calibrate() -> None:
@@ -225,7 +249,8 @@ def main() -> None:
     if args.calibrate:
         _run_calibrate()
         return
-    if args.set_status or (args.prune_days is not None and not args.keyword):
+    if (args.set_status or args.stalled
+            or (args.prune_days is not None and not args.keyword)):
         _run_maintenance(args)
         return
 
@@ -276,8 +301,10 @@ def main() -> None:
     stored_scale = db_handler.get_meta("score_scale")
     current_scale = str(config.SCORE_SCALE_VERSION)
     if args.rescore:
-        rescored = matcher.rank_jobs(db_handler.fetch_all_jobs(), resume_skills)
+        stored = db_handler.fetch_all_jobs()
+        rescored = matcher.rank_jobs(stored, resume_skills)
         db_handler.update_scores(rescored)
+        db_handler.replace_job_skills(skill_extractor.extract_for_rows(stored))
         db_handler.set_meta("score_scale", current_scale)
     elif stored_scale and stored_scale != current_scale:
         logging.warning("Stored scores use scale v%s but this build scores on "
@@ -302,13 +329,14 @@ def main() -> None:
                                  resume_skills,
                                  max_experience_years=args.max_years)
 
-    # Step 5: Persist results to SQLite
+    # Step 5: Persist results and extract skill demand
     _log_step(5, "Saving results to database")
     descriptions = {job.job_key: (job.description or job.teaser) for job in new_jobs}
     for row in new_rows:
         row["description"] = descriptions.get(row["job_key"], "")
     db_handler.insert_jobs(new_rows)
     db_handler.mark_seen(list(seen_keys))
+    db_handler.replace_job_skills(skill_extractor.extract_for_rows(new_rows))
 
     # Step 6: Export ranked CSV + HTML report
     _log_step(6, "Exporting ranked CSV and HTML report")

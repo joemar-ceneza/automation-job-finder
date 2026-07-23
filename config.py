@@ -91,8 +91,14 @@ RETRY_DELAY_SECONDS = 2.0
 RETRY_BACKOFF = 2.0  # delay doubles after each failed attempt
 
 # ======================================================
-# APPLICATION STATUS (dashboard + --set-status)
+# APPLICATION LIFECYCLE (dashboard + --set-status)
 # ======================================================
+# The stages themselves and their legal transitions live in stages.py.
+# An application awaiting a reply for this many days is suggested as ghosted.
+GHOSTED_AFTER_DAYS = 21
+
+# Kept for backwards compatibility with rows written before stages.py existed;
+# stages.parse() maps 'new' -> saved and 'no answer' -> ghosted.
 STATUS_OPTIONS = ["new", "interested", "applied", "rejected", "no answer"]
 
 # ======================================================

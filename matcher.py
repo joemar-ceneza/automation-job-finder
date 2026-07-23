@@ -13,6 +13,7 @@ import os
 import re
 
 import config
+import stages
 from resume_parser import skill_in_text
 
 CSV_FIELDNAMES = [
@@ -234,7 +235,7 @@ def rank_jobs(jobs: list[dict], resume_skills: list[str],
             "salary_min": salary_min if salary_min is not None else "",
             "salary_max": salary_max if salary_max is not None else "",
             "listing_date": job.get("listing_date", ""),
-            "status": "new",
+            "status": str(stages.Stage.SAVED),
             "matched_skills": ", ".join(matched),
             "required_years": required_years if required_years is not None else "",
             "search_keyword": job.get("search_keyword", ""),

@@ -442,6 +442,127 @@ email, and salary stated only as "competitive" on a 5+ year role.
 (vague scope, three jobs in one posting, churn signals). Runs through the Batch
 API nightly at half price rather than synchronously per job.
 
+### 3.6 Skill analytics — Standard only
+
+No AI at any point, and none needed. Every scraped advertisement is run through
+the canonical skill matcher once at scrape time and the hits are written to
+`job_skills` with a category. Everything else is `GROUP BY`.
+
+| Panel | Query |
+|---|---|
+| Top languages / frameworks / databases / cloud / AI / tools | `COUNT(DISTINCT job_key)` grouped by skill, filtered by `category` |
+| Demand vs. your profile | same, left-joined against `resume_skills` to mark held/missing |
+| Trend lines | grouped by `strftime('%Y-%W', first_seen)` |
+| Co-occurrence | self-join on `job_key` — "72% of jobs wanting Docker also want AWS" |
+
+Categories come from a static `SKILL_CATEGORIES` map in config, not from a
+model. Charts use Streamlit's built-in `st.bar_chart` / `st.line_chart`; pie
+charts are deliberately skipped in favour of horizontal bars, which are easier
+to read at ten-plus categories and are what the data actually calls for.
+
+> **Sample-size gate.** Any percentage drawn from fewer than
+> `CALIBRATION_MIN_JOBS` postings is suppressed and shown as a raw count.
+> A "67% of jobs want Kubernetes" claim computed from three ads is worse than
+> no claim.
+
+### 3.7 Learning recommendations
+
+**Standard.** Missing skills are already known from §3.1. Order them by
+`demand DESC`, then by a static difficulty and prerequisite map:
+
+```yaml
+docker:
+  difficulty: medium        # easy | medium | hard
+  hours: 20
+  prerequisites: [bash command line]
+aws:
+  difficulty: hard
+  hours: 40
+  prerequisites: [docker]
+```
+
+A topological sort over `prerequisites` produces the learning order, and summing
+`hours` gives a study estimate. Deterministic, and the numbers are yours to
+tune rather than a model's invention.
+
+**AI.** Narrative roadmap, a week-by-week study plan, and project suggestions
+that combine the missing skill with skills you already have.
+
+> **Resource links stay curated.** A model asked for course URLs produces
+> plausible ones that 404. Keep free/paid/official links in the same YAML and
+> let the model write only the prose around them.
+
+### 3.8 Salary analytics
+
+**Standard.** `_parse_salary()` already normalises advertised ranges to monthly
+pesos. Compare a job against the corpus for the same role:
+
+```sql
+SELECT MIN(salary_min), MAX(salary_max),
+       AVG((salary_min + salary_max) / 2.0),
+       COUNT(*)
+FROM jobs
+WHERE archived = 0 AND search_keyword = :role AND salary_min IS NOT NULL;
+```
+
+Band the job as **Below / Competitive / Above** using percentiles of that
+distribution (below p25, p25–p75, above p75), and derive yearly (×12, plus a
+13th-month note for PH) and hourly (÷ 176) figures.
+
+> **Say whose market it is.** This is *your scraped corpus*, not a national
+> salary survey. Label the panel "vs. 47 similar postings you've tracked" and
+> suppress it entirely below ~30 salaried samples. Many PH ads state no salary
+> at all, so the sample is always smaller than the job count.
+
+**AI.** Competitiveness explanation, negotiation framing, and how the figure
+reads against the seniority the advertisement asks for.
+
+### 3.9 Company intelligence
+
+**Standard.** Only what is actually obtainable: location and industry from the
+advertisement, website via the company's own careers link when present, and —
+more useful than any of it — what your own database knows. Posting frequency,
+average advertised salary, roles historically posted, and first-seen date all
+come from `GROUP BY company`. A company that posts the same role monthly is
+telling you something a star rating would not.
+
+> **Company size, ratings, and interview difficulty are cut.** They live on
+> Glassdoor and LinkedIn, whose terms prohibit automated collection and whose
+> bot protection is heavier than Indeed's — which already forced detect-and-skip
+> in this codebase. Build the panel without them rather than shipping columns
+> that are permanently empty.
+
+**AI.** Culture and interview-process summary inferred *from the advertisement
+text only*, with advantages and concerns, clearly labelled as inference from the
+ad rather than researched fact.
+
+### 3.10 Portfolio matching
+
+**Standard.** A `data/portfolio.yaml` you maintain, each project tagged with the
+technologies it demonstrates. Matching reuses the existing scorer with the
+project's tags standing in for a resume's skills, so a project ranks against a
+job exactly the way a resume does — no second algorithm to maintain.
+
+```yaml
+- name: Job Finder
+  url: https://github.com/joemar-ceneza/automation-job-finder
+  tech: [Python, Playwright, SQLite, Streamlit, Data extraction]
+  summary: Scrapes and scores job ads against a resume.
+```
+
+**AI.** Explains why each project fits the role and which of its aspects to lead
+with in an application.
+
+### 3.11 Resume comparison
+
+**Standard.** Score every stored resume against the selected job with the same
+scorer, and present them side by side with score, matched and missing skills,
+and ATS rating from §3.2. Ranking is arithmetic; no model can rank more honestly
+than the numbers do.
+
+**AI.** Which resume is strongest and why, plus what would most improve each
+one for this specific job.
+
 ---
 
 ## 4. Project structure
@@ -941,7 +1062,60 @@ embeddings in memory).
 
 ---
 
-## 11. Scale & risks
+## 11. Testing strategy
+
+The value of a test here is inversely proportional to how much of the internet
+it touches. Four tiers, largest first:
+
+| Tier | Covers | Speed | Runs |
+|---|---|---|---|
+| **Unit** | scoring scale, alias resolution, salary parsing, stage transitions, ATS rubric, topological learning order | milliseconds | every save |
+| **Contract** | each `LLMProvider` and each capability against a fake, asserting the protocol is honoured and that AI failure degrades to Standard | milliseconds | every save |
+| **Integration** | repository against a temp SQLite file: migrations, backup/restore, upsert, stage history | ~1s | every commit |
+| **Live smoke** | one page per site, asserting selectors still match | ~30s | on demand, before a release |
+
+Rules that keep this honest:
+
+- **Never call a real model in tests.** A `FakeProvider` returns canned schema-
+  valid objects; a `FailingProvider` raises, so the degrade-to-Standard path is
+  exercised on every run rather than discovered in production.
+- **Scrapers are tested against saved HTML**, not the live site. The existing
+  `save_debug_html()` output is the fixture source — when a site changes, the
+  captured page becomes a regression test.
+- **Property tests over golden numbers** where the constant is calibrated.
+  `test_scoring.py` asserts ordering, clamping, and length-independence rather
+  than "this job scores 83", because `TARGET_MATCH_SKILLS` is tuned per corpus
+  and a golden number would break on every recalibration.
+- **Selector health is a command, not a test** — `--check-selectors` reports
+  which selectors still match so a site change is a report rather than a silent
+  zero-result run at 6am.
+
+Target coverage is the domain layer at or near 100% (it is pure and cheap to
+cover) and no coverage requirement at all on `ui/`, where the cost of testing
+Streamlit exceeds the value.
+
+---
+
+## 12. Security
+
+Everything here is local and single-user, which removes most of the usual attack
+surface and leaves a small number of real concerns.
+
+| Concern | Control |
+|---|---|
+| API keys | `.env` only, never committed, `.env.example` holds placeholders. Never logged, never echoed in an error message. |
+| Resume PII | `resume.pdf` and generated documents are gitignored. The master resume lives locally; nothing uploads it anywhere except a model call you explicitly trigger. |
+| Cloud AI exposure | Any AI-mode call sends resume text and job descriptions to the vendor. Say so plainly in the UI; offer Ollama/LM Studio for zero egress. |
+| Prompt injection | A job advertisement is untrusted input. Never let its text reach a tool-calling or file-writing context; the AI layer only reads and returns text, so the blast radius is a bad narrative, not a bad action. |
+| Generated-file paths | Filenames derived from company or job titles must be sanitised — `os.path.basename()` plus a whitelist — before touching the filesystem. |
+| SQL | Every query is parameterised. The one dynamic fragment is the `ALTER TABLE` column name in migrations, drawn from a hardcoded dict, never from input. |
+| Dashboard exposure | Streamlit binds localhost by default. If it is ever bound to a LAN address, put a password in front of it — the database contains your full application history. |
+| Dependency risk | Standard mode needs three packages, none of which make network calls. Keep AI clients in an optional extra so a user who never enables AI never installs them. |
+| Scraping posture | Rate limits and page caps are load-bearing, not decoration. Personal, low-volume use is what keeps this defensible. |
+
+---
+
+## 13. Scale & risks
 
 | Dimension | Comfortable to | Past that |
 |---|---|---|
