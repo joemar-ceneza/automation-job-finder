@@ -20,6 +20,11 @@ from fpdf.enums import XPos, YPos
 
 from resume_model import MasterResume
 
+# fpdf2 subsets the embedded font through fontTools, which logs a line per
+# table at INFO — dozens of "glyf pruned" messages that bury the run's own
+# output. The work is routine; only its failures are worth hearing about.
+logging.getLogger("fontTools").setLevel(logging.WARNING)
+
 # fpdf2's built-in fonts are Latin-1 only, so a resume containing "·" or an
 # em dash raises on output. A system TrueType font avoids transliterating the
 # document; these are the usual Windows locations, checked in order.
@@ -216,20 +221,100 @@ def write_pdf(resume: MasterResume, path: str) -> str:
 
 
 # ======================================================
+# COVER LETTERS
+# ======================================================
+def write_letter_markdown(letter, path: str) -> str:
+    """Writes the letter as Markdown."""
+    _ensure_parent(path)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(letter.to_markdown())
+    logging.info("Wrote Markdown cover letter to %s", path)
+    return path
+
+
+def write_letter_docx(letter, path: str) -> str:
+    """Writes the letter as a plain single-column DOCX."""
+    _ensure_parent(path)
+    document = Document()
+    style = document.styles["Normal"]
+    style.font.name = "Calibri"
+    style.font.size = Pt(11)
+
+    for line in (letter.letter_date, letter.company):
+        if line:
+            document.add_paragraph(line)
+    document.add_paragraph("")
+    document.add_paragraph(letter.salutation())
+    for paragraph in letter.paragraphs:
+        document.add_paragraph(paragraph)
+    document.add_paragraph("")
+    document.add_paragraph("Sincerely,")
+    signature = document.add_paragraph()
+    signature.add_run(letter.sender.name).bold = True
+    detail = letter.sender.detail_line()
+    if detail:
+        document.add_paragraph(detail)
+
+    document.save(path)
+    logging.info("Wrote DOCX cover letter to %s", path)
+    return path
+
+
+def write_letter_pdf(letter, path: str) -> str:
+    """Writes the letter as a PDF with selectable text."""
+    _ensure_parent(path)
+    pdf = _ResumePDF()
+    pdf.add_page()
+
+    for line in (letter.letter_date, letter.company):
+        if line:
+            pdf.block(line, 10.5)
+    pdf.ln(4)
+    pdf.block(letter.salutation(), 11)
+    pdf.ln(2)
+    for paragraph in letter.paragraphs:
+        pdf.block(paragraph, 11, gap=5.4)
+        pdf.ln(2)
+    pdf.ln(3)
+    pdf.block("Sincerely,", 11)
+    pdf.block(letter.sender.name, 11, style="B")
+    detail = letter.sender.detail_line()
+    if detail:
+        pdf.block(detail, 9.5)
+
+    pdf.output(path)
+    logging.info("Wrote PDF cover letter to %s", path)
+    return path
+
+
+# ======================================================
 # PUBLIC ENTRY POINT
 # ======================================================
 _WRITERS = {"md": write_markdown, "markdown": write_markdown,
             "docx": write_docx, "pdf": write_pdf}
 
+_LETTER_WRITERS = {"md": write_letter_markdown,
+                   "markdown": write_letter_markdown,
+                   "docx": write_letter_docx, "pdf": write_letter_pdf}
+
+
+def _dispatch(writers: dict, document, path: str, fmt: str | None) -> str:
+    chosen = (fmt or os.path.splitext(path)[1].lstrip(".")).lower()
+    writer = writers.get(chosen)
+    if writer is None:
+        raise ValueError(f"Unsupported format {chosen!r}. "
+                         f"Choose from: {', '.join(sorted(set(writers)))}")
+    return writer(document, path)
+
 
 def write(resume: MasterResume, path: str, fmt: str | None = None) -> str:
     """Writes the resume in the format implied by the path, or fmt if given."""
-    chosen = (fmt or os.path.splitext(path)[1].lstrip(".")).lower()
-    writer = _WRITERS.get(chosen)
-    if writer is None:
-        raise ValueError(f"Unsupported format {chosen!r}. "
-                         f"Choose from: {', '.join(sorted(set(_WRITERS)))}")
-    return writer(resume, path)
+    return _dispatch(_WRITERS, resume, path, fmt)
+
+
+def write_letter(letter, path: str, fmt: str | None = None) -> str:
+    """Writes a cover letter in the format implied by the path, or fmt."""
+    return _dispatch(_LETTER_WRITERS, letter, path, fmt)
 
 
 def slugify(text: str, limit: int = 48) -> str:

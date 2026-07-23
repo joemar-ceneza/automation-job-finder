@@ -32,6 +32,12 @@ MASTER_RESUME_FILE = os.path.join(BASE_DIR, "master_resume.md")
 DOCUMENTS_DIR = os.path.join(OUTPUT_DIR, "documents")
 DOCUMENT_FORMATS = ["md", "docx", "pdf"]
 
+# Cover letter templates. Adding a .txt file here adds a tone — no code change.
+COVER_LETTER_TEMPLATE_DIR = os.path.join(BASE_DIR, "data", "cover_letters")
+COVER_LETTER_TONE = "direct"
+# Used when the advert names no hiring manager, which is nearly always.
+COVER_LETTER_RECIPIENT = "Hiring Manager"
+
 # Sections pushed to the top when tailoring a resume to a job. Anything not
 # listed keeps its relative position after these.
 RESUME_SECTION_PRIORITY = ["Summary", "Skills", "Experience", "Projects",

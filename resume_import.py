@@ -31,14 +31,29 @@ _KNOWN_SECTIONS = {
 # A line that is probably a heading: short, no sentence punctuation.
 _HEADING_LIKE = re.compile(r"^[A-Z][A-Za-z&/ ]{2,40}$")
 _BULLET_START = re.compile(r"^\s*[-*•▪·]\s+")
-# "Jan 2023 - Present", "2021 – 2024", "01/2020 to 03/2022"
+# "Jan 2023 - Present", "2021 – 2024", "01/2020 to 03/2022".
+# The month names need word boundaries: without them "mar" matches inside
+# "SUMMARY", "jun" inside "JUNIOR", and "sep" inside "SEPARATE", so ordinary
+# headings get mistaken for date lines.
 _DATE_RANGE = re.compile(
-    r"(19|20)\d{2}|present|current|"
-    r"jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec", re.IGNORECASE)
+    r"\b(?:19|20)\d{2}\b|\b(?:present|current)\b|"
+    r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\b",
+    re.IGNORECASE)
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
 _PHONE = re.compile(r"\+?\d[\d\s().-]{7,}\d")
 # "Front-End Development:" / "Languages:" at the start of a skills line.
 _SKILL_CATEGORY = re.compile(r"^[A-Z][A-Za-z&/\- ]{2,40}:\s*")
+# An address line, so it is not mistaken for a professional headline. The
+# markers are Philippines-oriented because that is where this tool is used.
+_LOCATION_HINT = re.compile(
+    r"\b(city|province|philippines|metro manila|manila|cebu|davao|quezon|"
+    r"makati|taguig|pasig|remote)\b", re.IGNORECASE)
+# "Leekie Enterprise Inc. | November 2024 - Present" — employer and dates share
+# one line in most resumes, separated by a pipe, bullet, or en dash.
+_EMPLOYER_AND_DATES = re.compile(r"\s*[|•·]\s*|\s+[–—]\s+")
+# A profile or portfolio URL belongs in links, not in the headline.
+_LINK = re.compile(r"(?:https?://|www\.)\S+"
+                   r"|\b(?:linkedin|github)\.com/\S+", re.IGNORECASE)
 
 
 # ======================================================
@@ -82,10 +97,39 @@ def _parse_contact_block(lines: list[str]) -> Contact:
             contact.email = found.group()
         if not contact.phone and (found := _PHONE.search(stripped)):
             contact.phone = found.group().strip()
+        if _LINK.search(stripped):
+            contact.links.append(_LINK.search(stripped).group().rstrip(".,"))
+            continue
         has_details = _EMAIL.search(stripped) or _PHONE.search(stripped)
-        if not has_details and not contact.headline and len(stripped) < 80:
+        if has_details or len(stripped) >= 80:
+            continue
+        # Neither an address nor a profile URL is a headline. Getting this
+        # wrong produces letters that open "I work as a Quezon City, Metro
+        # Manila, Philippines".
+        if _LOCATION_HINT.search(stripped) and not contact.location:
+            contact.location = stripped
+        elif not contact.headline:
             contact.headline = stripped
     return contact
+
+
+def _split_employer_and_dates(line: str) -> tuple[str, str]:
+    """
+    Separates "Leekie Enterprise Inc. | November 2024 - Present" into the
+    employer and the dates. Returns ("", line) when there is no employer to
+    take, so the caller can keep the line as-is.
+    """
+    parts = [part.strip() for part in _EMPLOYER_AND_DATES.split(line, maxsplit=1)
+             if part.strip()]
+    if len(parts) != 2:
+        return "", line
+    first, second = parts
+    # Whichever half carries the dates is the meta; the other is the employer.
+    if _DATE_RANGE.search(second) and not _DATE_RANGE.search(first):
+        return first, second
+    if _DATE_RANGE.search(first) and not _DATE_RANGE.search(second):
+        return second, first
+    return "", line
 
 
 def _split_skill_line(line: str) -> list[str]:
@@ -133,7 +177,10 @@ def _build_section(name: str, body: list[str]) -> Section:
                                           if len(pieces) > 1 else ""))
         elif current is not None and not current.meta and not current.bullets \
                 and _DATE_RANGE.search(stripped):
-            current.meta = stripped
+            employer, dates = _split_employer_and_dates(stripped)
+            if employer and not current.organisation:
+                current.organisation = employer
+            current.meta = dates
         elif current is not None and current.bullets:
             # A PDF wraps long bullets across lines, and the continuation
             # carries no marker. Treating it as a new bullet would cut every
@@ -158,7 +205,14 @@ def from_resume_text(text: str) -> MasterResume:
     current_name: str | None = None
     current_body: list[str] = []
 
+    seen_content = False
     for raw_line in (text or "").splitlines():
+        # The first non-empty line is the candidate's name. It is often set in
+        # capitals, which would otherwise look exactly like a section heading.
+        if not seen_content and raw_line.strip():
+            seen_content = True
+            header.append(raw_line)
+            continue
         heading = _canonical_heading(raw_line)
         if heading:
             if current_name is not None:

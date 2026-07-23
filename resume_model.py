@@ -46,10 +46,13 @@ _LINK = re.compile(r"(?:https?://|www\.)\S+|\b[\w-]+\.(?:com|dev|io|ph|net|org)"
 # Review banners and the user's own notes live in HTML comments.
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 
-# Sections holding prose rather than dated entries.
-PROSE_SECTIONS = {"summary", "objective", "profile", "about"}
-# Sections holding a comma-separated list.
-LIST_SECTIONS = {"skills", "technologies", "tech stack", "tools"}
+# Section kinds are decided by keyword, not exact name: real resumes write
+# "Professional Summary" and "Technical Skills", and an exact-match set would
+# treat both as dated entries — which turns a summary paragraph into a fake
+# job whose text then gets quoted as an employer.
+PROSE_KEYWORDS = ("summary", "objective", "profile", "about")
+LIST_KEYWORDS = ("skill", "technolog", "tech stack", "tools", "competenc")
+EXPERIENCE_KEYWORDS = ("experience", "employment", "work history", "career")
 
 
 # ======================================================
@@ -101,11 +104,17 @@ class Section:
     @property
     def kind(self) -> str:
         key = self.name.strip().lower()
-        if key in PROSE_SECTIONS:
+        if any(word in key for word in PROSE_KEYWORDS):
             return "prose"
-        if key in LIST_SECTIONS:
+        if any(word in key for word in LIST_KEYWORDS):
             return "list"
         return "entries"
+
+    @property
+    def is_experience(self) -> bool:
+        """True for the sections that hold actual jobs."""
+        key = self.name.strip().lower()
+        return any(word in key for word in EXPERIENCE_KEYWORDS)
 
     def text(self) -> str:
         return " ".join([self.prose, ", ".join(self.items),

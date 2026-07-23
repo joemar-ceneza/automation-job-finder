@@ -19,6 +19,7 @@ from datetime import date, datetime
 from logging.handlers import RotatingFileHandler
 
 import config
+import cover_letter
 import db_handler
 import dedupe
 import documents
@@ -113,6 +114,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--tailor", metavar="JOB",
                         help="Tailor your master resume to a job (job_key or "
                              "URL) and export it, then exit")
+    parser.add_argument("--cover-letter", metavar="JOB",
+                        help="Draft a cover letter for a job (job_key or URL) "
+                             "and export it, then exit")
+    parser.add_argument("--tone", default=config.COVER_LETTER_TONE,
+                        help="Cover letter tone: "
+                             + ", ".join(cover_letter.available_tones()))
+    parser.add_argument("--recipient", default=None,
+                        help="Name the letter is addressed to "
+                             f"(default: {config.COVER_LETTER_RECIPIENT})")
     parser.add_argument("--formats", default="md,docx,pdf",
                         help="Formats for --tailor: " +
                              ", ".join(config.DOCUMENT_FORMATS))
@@ -138,6 +148,7 @@ def _parse_args() -> argparse.Namespace:
     maintenance_only = (args.set_status or args.generate_skills
                         or args.backup or args.calibrate or args.stalled
                         or args.import_resume or args.tailor
+                        or args.cover_letter
                         or (args.prune_days is not None and not args.keyword))
     if not maintenance_only and (not args.resume_pdf or not args.keyword):
         parser.error("resume_pdf and keyword are required (unless using "
@@ -233,21 +244,66 @@ def _run_import_resume(args: argparse.Namespace) -> None:
                  config.MASTER_RESUME_FILE)
 
 
-def _run_tailor(args: argparse.Namespace) -> None:
-    """Tailors the master resume to one job and exports it."""
+def _load_job_and_resume(job_reference: str):
+    """
+    Shared setup for the document commands. Returns (job, resume), or
+    (None, None) after explaining what is missing.
+    """
     db_handler.init_db()
-    job = db_handler.get_job(args.tailor)
+    job = db_handler.get_job(job_reference)
     if job is None:
-        logging.error("No job matching '%s' in the database.", args.tailor)
-        return
+        logging.error("No job matching '%s' in the database.", job_reference)
+        return None, None
     if not os.path.exists(config.MASTER_RESUME_FILE):
         logging.error("No master resume at %s. Create one first: "
                       "python main.py <resume.pdf> --import-resume",
                       config.MASTER_RESUME_FILE)
+        return None, None
+    return job, resume_model.load(config.MASTER_RESUME_FILE)
+
+
+def _export_all(document, stem: str, formats: str, writer) -> None:
+    """Writes one document in each requested format."""
+    for fmt in [part.strip().lower() for part in formats.split(",")
+                if part.strip()]:
+        if fmt not in config.DOCUMENT_FORMATS:
+            logging.warning("Skipping unknown format '%s'.", fmt)
+            continue
+        writer(document, os.path.join(config.DOCUMENTS_DIR,
+                                      f"{stem}.{fmt}"), fmt)
+
+
+def _run_cover_letter(args: argparse.Namespace) -> None:
+    """Drafts a cover letter for one job and exports it."""
+    job, resume = _load_job_and_resume(args.cover_letter)
+    if job is None:
+        return
+    if args.tone not in cover_letter.available_tones():
+        logging.error("Unknown tone '%s'. Available: %s", args.tone,
+                      ", ".join(cover_letter.available_tones()))
         return
 
-    result = optimizer.optimise(resume_model.load(config.MASTER_RESUME_FILE),
-                                job)
+    letter = cover_letter.compose(resume, job, tone=args.tone,
+                                  recipient=args.recipient)
+    logging.info("=" * 70)
+    for line in letter.to_text().splitlines():
+        logging.info("  %s", line)
+    logging.info("=" * 70)
+    logging.info("Read it before sending — a template letter reads like one, "
+                 "and the opening line is usually worth rewriting yourself.")
+
+    stem = documents.slugify(
+        f"cover-letter-{job['title']}-{job.get('company') or ''}")
+    _export_all(letter, stem, args.formats, documents.write_letter)
+
+
+def _run_tailor(args: argparse.Namespace) -> None:
+    """Tailors the master resume to one job and exports it."""
+    job, resume = _load_job_and_resume(args.tailor)
+    if job is None:
+        return
+
+    result = optimizer.optimise(resume, job)
 
     logging.info("=" * 70)
     logging.info("%s @ %s", job["title"], job.get("company") or "unknown")
@@ -262,13 +318,7 @@ def _run_tailor(args: argparse.Namespace) -> None:
         logging.info("  - %s", change)
 
     stem = documents.slugify(f"{job['title']}-{job.get('company') or ''}")
-    for fmt in [part.strip().lower() for part in args.formats.split(",")
-                if part.strip()]:
-        if fmt not in config.DOCUMENT_FORMATS:
-            logging.warning("Skipping unknown format '%s'.", fmt)
-            continue
-        path = os.path.join(config.DOCUMENTS_DIR, f"{stem}.{fmt}")
-        documents.write(result.resume, path, fmt)
+    _export_all(result.resume, stem, args.formats, documents.write)
 
 
 def _run_calibrate() -> None:
@@ -327,6 +377,9 @@ def main() -> None:
         return
     if args.tailor:
         _run_tailor(args)
+        return
+    if args.cover_letter:
+        _run_cover_letter(args)
         return
     if args.backup:
         db_handler.backup_database(reason="manual")

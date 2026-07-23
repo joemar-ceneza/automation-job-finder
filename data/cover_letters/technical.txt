@@ -1,0 +1,15 @@
+# Technical — leads with the stack. Suits engineering-led teams where the
+# reader is likely to be the person you would work alongside.
+#
+# Available: $company $position $top_skills $recent_role $recent_employer
+#            $highlight $headline $name $matched_count
+#
+# Lines starting with # are comments and are not part of the letter.
+
+I am applying for the $position role at $company. My working stack overlaps with yours on $matched_count of the technologies named in your advert, including $top_skills.
+
+As $recent_role at $recent_employer, most of my work is building and maintaining automation that other people depend on being correct. The most relevant example: $highlight
+
+That includes the unglamorous parts — handling the cases where a page changes shape, a source goes quiet, or a run has to be safe to repeat.
+
+I am happy to walk through any of this in detail, or to talk about how I would approach a specific problem on your side. Thank you for your time.

@@ -83,6 +83,62 @@ def test_categories_do_not_fuse_across_lines():
 
 
 # ======================================================
+# CONTACT BLOCK
+# ======================================================
+def test_the_first_line_is_always_the_name():
+    """
+    Regression: a name set in capitals looks exactly like a section heading,
+    so "JOEMAR CENEZA" became a section once the date regex stopped matching
+    "mar" inside it.
+    """
+    resume = resume_import.from_resume_text(WRAPPED_PDF_TEXT)
+    assert resume.contact.name == "JOEMAR CENEZA"
+    assert not any(section.name == "JOEMAR CENEZA"
+                   for section in resume.sections)
+
+
+def test_an_address_becomes_the_location_not_the_headline():
+    resume = resume_import.from_resume_text(WRAPPED_PDF_TEXT)
+    assert "Quezon City" in resume.contact.location
+    assert "Quezon City" not in resume.contact.headline
+
+
+def test_a_profile_url_becomes_a_link_not_the_headline():
+    text = WRAPPED_PDF_TEXT.replace(
+        "joemar.ceneza@gmail.com | +63 976 056 1763",
+        "joemar.ceneza@gmail.com | +63 976 056 1763\n"
+        "LinkedIn: https://www.linkedin.com/in/joemarceneza/")
+    resume = resume_import.from_resume_text(text)
+    assert any("linkedin.com" in link for link in resume.contact.links)
+    assert "linkedin" not in resume.contact.headline.lower()
+
+
+# ======================================================
+# HEADING DETECTION
+# ======================================================
+def test_month_names_only_match_as_whole_words():
+    """
+    Regression: the date regex had no word boundaries, so "mar" matched
+    inside "SUMMARY" and the heading was rejected as a date line. The same
+    flaw hid "jun" inside "JUNIOR" and "sep" inside "SEPARATE".
+    """
+    text = WRAPPED_PDF_TEXT.replace(
+        "SKILLS", "PROFESSIONAL SUMMARY\nA developer who builds things.\n\nSKILLS")
+    resume = resume_import.from_resume_text(text)
+    assert resume.section("Professional Summary") is not None
+
+
+def test_employer_and_dates_on_one_line_are_split():
+    """Regression: the employer stayed inside the date line, so letters said
+    "at my current employer" instead of naming the company."""
+    resume = resume_import.from_resume_text(WRAPPED_PDF_TEXT)
+    entry = resume.section("Experience").entries[0]
+    assert entry.organisation == "Leekie Enterprise Inc."
+    assert "Leekie" not in entry.meta
+    assert "November 2024" in entry.meta
+
+
+# ======================================================
 # STRUCTURE
 # ======================================================
 def test_sections_are_recognised_from_all_caps_headings():

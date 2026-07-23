@@ -1,0 +1,17 @@
+# Direct — concise and factual. The safe default for most applications.
+# Paragraphs are separated by a blank line. Placeholders use $name syntax and
+# are filled from your master resume and the job advert; an unknown one is
+# left as-is rather than crashing, so you can add your own.
+#
+# Available: $company $position $top_skills $recent_role $recent_employer
+#            $highlight $headline $name $matched_count
+#
+# Lines starting with # are comments and are not part of the letter.
+
+I am writing to apply for the $position role at $company. I work as a $headline, and the requirements you have listed line up closely with what I do day to day — particularly $top_skills.
+
+As $recent_role at $recent_employer, one part of my work stands out as relevant here: $highlight
+
+That is the same class of problem this position describes, so I would bring the experience directly rather than needing to build up to it.
+
+I would welcome the chance to discuss the role further. Thank you for considering my application.

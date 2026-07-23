@@ -1,0 +1,17 @@
+# Warm — friendlier and more personal. Suits smaller teams and startups,
+# where a letter is more likely to be read by a person than a parser.
+#
+# Available: $company $position $top_skills $recent_role $recent_employer
+#            $highlight $headline $name $matched_count
+#
+# Lines starting with # are comments and are not part of the letter.
+
+I was glad to come across the $position opening at $company. I am a $headline, and this is the kind of work I genuinely enjoy — building things that take repetitive work off people's hands and give them back their time.
+
+What drew me to the role is the overlap with what I already do. You are looking for $top_skills, and those are the tools I reach for most.
+
+At $recent_employer I work as a $recent_role, and the piece of it closest to your advert is this: $highlight
+
+That work has taught me as much about understanding what people actually need as it has about writing the code itself, and I would love to bring both to $company.
+
+Thank you for taking the time to read this. I would be glad to talk further whenever suits you.
