@@ -25,6 +25,15 @@ BACKUP_DIR = os.path.join(OUTPUT_DIR, "backups")
 BACKUP_KEEP = 10  # oldest backups beyond this are deleted
 DEFAULT_SKILLS_FILE = os.path.join(BASE_DIR, "skills.txt")
 DEFAULT_SKILLS_DRAFT = os.path.join(BASE_DIR, "skills_draft.txt")
+
+# The master resume: structured Markdown that is the source of truth once
+# imported. Everything downstream reads this, never the PDF.
+MASTER_RESUME_FILE = os.path.join(BASE_DIR, "master_resume.md")
+
+# Sections pushed to the top when tailoring a resume to a job. Anything not
+# listed keeps its relative position after these.
+RESUME_SECTION_PRIORITY = ["Summary", "Skills", "Experience", "Projects",
+                           "Education", "Certifications"]
 DEFAULT_OUTPUT_CSV = os.path.join(OUTPUT_DIR, "ranked_jobs.csv")
 DEFAULT_OUTPUT_HTML = os.path.join(OUTPUT_DIR, "report.html")
 

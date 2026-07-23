@@ -23,6 +23,7 @@ import db_handler
 import dedupe
 import email_handler
 import matcher
+import resume_import
 import resume_parser
 import scraper_common
 import scraper_jobstreet
@@ -103,6 +104,9 @@ def _parse_args() -> argparse.Namespace:
                         help="Draft a skill list from your resume PDF into "
                              "skills_draft.txt (review it, then replace "
                              "skills.txt), then exit")
+    parser.add_argument("--import-resume", action="store_true",
+                        help="Convert your resume PDF into an editable master "
+                             "resume at master_resume.md, then exit")
     parser.add_argument("--backup", action="store_true",
                         help="Copy the database to output/backups/, then exit")
     parser.add_argument("--calibrate", action="store_true",
@@ -119,8 +123,12 @@ def _parse_args() -> argparse.Namespace:
     if args.generate_skills and not args.resume_pdf:
         parser.error("--generate-skills needs your resume PDF, e.g. "
                      "python main.py resume.pdf --generate-skills")
+    if args.import_resume and not args.resume_pdf:
+        parser.error("--import-resume needs your resume PDF, e.g. "
+                     "python main.py resume.pdf --import-resume")
     maintenance_only = (args.set_status or args.generate_skills
                         or args.backup or args.calibrate or args.stalled
+                        or args.import_resume
                         or (args.prune_days is not None and not args.keyword))
     if not maintenance_only and (not args.resume_pdf or not args.keyword):
         parser.error("resume_pdf and keyword are required (unless using "
@@ -193,6 +201,29 @@ def _report_stalled() -> None:
                      job["company"] or "unknown", job["status_changed_at"])
 
 
+def _run_import_resume(args: argparse.Namespace) -> None:
+    """Bootstraps master_resume.md from the resume PDF."""
+    if os.path.exists(config.MASTER_RESUME_FILE):
+        logging.error("%s already exists — refusing to overwrite your edits. "
+                      "Delete or rename it first if you really want to "
+                      "re-import.", config.MASTER_RESUME_FILE)
+        return
+
+    text = resume_parser.extract_text_from_pdf(args.resume_pdf)
+    resume = resume_import.from_resume_text(text)
+    if not resume.sections:
+        logging.warning("No sections recognised in %s — is the PDF text-based "
+                        "rather than a scanned image?", args.resume_pdf)
+        return
+
+    resume_import.write_draft(resume, config.MASTER_RESUME_FILE)
+    logging.info("Sections found: %s",
+                 ", ".join(section.name for section in resume.sections))
+    logging.info("Review %s and correct anything the import got wrong. From "
+                 "now on it is the source of truth, not the PDF.",
+                 config.MASTER_RESUME_FILE)
+
+
 def _run_calibrate() -> None:
     """Suggests a TARGET_MATCH_SKILLS value from the stored corpus."""
     db_handler.init_db()
@@ -243,6 +274,9 @@ def main() -> None:
 
     if args.generate_skills:
         _run_generate_skills(args)
+        return
+    if args.import_resume:
+        _run_import_resume(args)
         return
     if args.backup:
         db_handler.backup_database(reason="manual")
