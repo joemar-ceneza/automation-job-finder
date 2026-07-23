@@ -11,6 +11,9 @@ resume.pdf
 skills_draft.txt
 master_resume.md
 output/documents/
+# The trailing slash matters: this ignores the resumes/ folder of personal
+# documents without ignoring resumes.py, which is code.
+resumes/
 
 # Legacy artifacts from the pre-SQLite version
 debug_page.html

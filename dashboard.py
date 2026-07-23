@@ -22,6 +22,7 @@ import explain
 import optimizer
 import resume_model
 import resume_parser
+import resumes
 import stages
 
 _TABLE_COLUMNS = ["status", "score_percent", "title", "company", "location",
@@ -300,22 +301,44 @@ def _render_analytics() -> None:
 # JOB DETAIL
 # ======================================================
 @st.cache_data(show_spinner=False)
-def _load_master_resume(mtime: float):
+def _load_resume(path: str, mtime: float):
     """
-    Reads the master resume, keyed by file mtime so edits are picked up
+    Reads one resume, keyed by path and file mtime so edits are picked up
     without restarting Streamlit.
     """
-    resume = resume_model.load(config.MASTER_RESUME_FILE)
+    resume = resume_model.load(path)
     skills = resume_parser.find_matching_skills(
         resume.full_text(), resume_parser.load_skills(config.DEFAULT_SKILLS_FILE))
     return resume, skills
 
 
-def _master_resume():
-    """The resume and its matched skills, or (None, None) when absent."""
-    if not os.path.exists(config.MASTER_RESUME_FILE):
+def _selected_resume():
+    """
+    The resume chosen in the sidebar and its matched skills, or (None, None)
+    when none exist yet.
+    """
+    references = resumes.available()
+    if not references:
         return None, None
-    return _load_master_resume(os.path.getmtime(config.MASTER_RESUME_FILE))
+    chosen = st.session_state.get("resume_name") or resumes.default_name()
+    reference = resumes.get(chosen) or references[0]
+    return _load_resume(reference.path, os.path.getmtime(reference.path))
+
+
+def _render_resume_picker() -> None:
+    """Sidebar control for which resume the document tools use."""
+    references = resumes.available()
+    if not references:
+        return
+    names = [reference.name for reference in references]
+    default = resumes.default_name()
+    st.sidebar.header("Resume")
+    st.sidebar.selectbox(
+        "In use", names,
+        index=names.index(default) if default in names else 0,
+        key="resume_name",
+        help=f"Markdown files in {config.RESUMES_DIR}. Add one to compare "
+             "versions against a job.")
 
 
 def _remember(slot: str, job_key: str, paths: list[str]) -> None:
@@ -425,6 +448,51 @@ def _render_cover_letter(job: dict, resume) -> None:
     _offer_downloads("letter_files", job["job_key"])
 
 
+def _render_comparison(job: dict) -> None:
+    """Ranks every resume against this job — arithmetic, no AI."""
+    references = resumes.available()
+    if len(references) < 2:
+        st.info(f"Only one resume found. Add another `.md` file to "
+                f"`{config.RESUMES_DIR}` — a backend-leaning and a full-stack "
+                "version, say — and this ranks them against each job.")
+        return
+
+    rankings = optimizer.compare(
+        job, [(reference.name, reference.load()) for reference in references])
+
+    st.dataframe(
+        pd.DataFrame([{
+            "Resume": ranking.name,
+            "Overall": ranking.combined,
+            "Match %": ranking.match_percent,
+            "ATS": ranking.ats_score,
+            "Evidenced": len(ranking.matched),
+            "Missing": ", ".join(ranking.missing[:5]) or "nothing",
+        } for ranking in rankings]),
+        column_config={
+            "Overall": st.column_config.ProgressColumn(
+                "Overall", format="%.1f", min_value=0, max_value=100),
+        },
+        hide_index=True, width="stretch")
+
+    best = rankings[0]
+    tied = [ranking.name for ranking in rankings
+            if ranking.combined == best.combined]
+    if len(tied) > 1:
+        st.info(f"**{' and '.join(tied)} score identically** — nothing that "
+                "separates them is asked for here, so use whichever you "
+                "prefer.")
+    else:
+        st.success(f"**Use {best.name}** — it evidences "
+                   f"{len(best.matched)} of the "
+                   f"{len(best.matched) + len(best.missing)} skills this "
+                   f"advert names, {best.combined - rankings[1].combined:.1f} "
+                   f"points ahead of {rankings[1].name}.")
+    if best.unmentioned:
+        st.caption("Evidenced in the experience but absent from the Skills "
+                   f"section: {', '.join(best.unmentioned)}")
+
+
 def _render_stage_control(job: dict) -> None:
     """Move the application and record a note, from the detail view."""
     current = stages.parse(job.get("status"))
@@ -484,23 +552,24 @@ def _render_job_detail(frame: pd.DataFrame) -> None:
     _render_stage_control(job)
     st.divider()
 
-    resume, resume_skills = _master_resume()
+    resume, resume_skills = _selected_resume()
     if resume is None:
-        st.info("No master resume yet. Create one to unlock tailoring and "
-                "cover letters:\n\n"
-                "`python main.py resume.pdf --import-resume`")
+        st.info("No resume yet. Create one to unlock tailoring and cover "
+                "letters:\n\n`python main.py resume.pdf --import-resume`")
         st.subheader("Why this score")
         _render_score_explanation(job, [])
         return
 
-    score_tab, tailor_tab, letter_tab = st.tabs(
-        ["Why this score", "Tailor resume", "Cover letter"])
+    score_tab, tailor_tab, letter_tab, compare_tab = st.tabs(
+        ["Why this score", "Tailor resume", "Cover letter", "Compare resumes"])
     with score_tab:
         _render_score_explanation(job, resume_skills, resume.full_text())
     with tailor_tab:
         _render_tailor(job, resume)
     with letter_tab:
         _render_cover_letter(job, resume)
+    with compare_tab:
+        _render_comparison(job)
 
 
 # ======================================================
@@ -520,6 +589,7 @@ def run_dashboard() -> None:
         return
 
     filters = _render_sidebar(frame)
+    _render_resume_picker()
     st.session_state["include_archived_value"] = filters["include_archived"]
 
     filtered = _apply_filters(frame, filters["search_text"],

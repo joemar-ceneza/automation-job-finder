@@ -26,8 +26,14 @@ BACKUP_KEEP = 10  # oldest backups beyond this are deleted
 DEFAULT_SKILLS_FILE = os.path.join(BASE_DIR, "skills.txt")
 DEFAULT_SKILLS_DRAFT = os.path.join(BASE_DIR, "skills_draft.txt")
 
-# The master resume: structured Markdown that is the source of truth once
-# imported. Everything downstream reads this, never the PDF.
+# Resumes are Markdown files in this folder, named by their stem: keep a
+# backend-leaning and a full-stack version side by side and compare them per
+# job. The filesystem is the source of truth — a resume is a document you edit.
+RESUMES_DIR = os.path.join(BASE_DIR, "resumes")
+DEFAULT_RESUME_NAME = "main"
+
+# Where --import-resume used to write, before resumes/ existed. Copied into
+# resumes/main.md automatically on first use, then never read again.
 MASTER_RESUME_FILE = os.path.join(BASE_DIR, "master_resume.md")
 DOCUMENTS_DIR = os.path.join(OUTPUT_DIR, "documents")
 DOCUMENT_FORMATS = ["md", "docx", "pdf"]

@@ -224,6 +224,68 @@ def ats_report(resume: MasterResume, wanted: list[str]) -> tuple[float,
 
 
 # ======================================================
+# COMPARISON
+# ======================================================
+@dataclass
+class ResumeRanking:
+    """How one resume fares against one job, for side-by-side comparison."""
+    name: str
+    match_percent: float
+    ats_score: float
+    matched: list[str] = field(default_factory=list)
+    missing: list[str] = field(default_factory=list)
+    unmentioned: list[str] = field(default_factory=list)
+    bullets: int = 0
+
+    @property
+    def combined(self) -> float:
+        """
+        Ranking key: how well the resume matches, tempered by how readable a
+        parser will find it. Weighted toward the match, because a perfectly
+        formatted resume for the wrong job is still the wrong resume.
+        """
+        return round(self.match_percent * 0.7 + self.ats_score * 0.3, 1)
+
+
+def _match_percent(resume: MasterResume, wanted: list[str]) -> float:
+    """Share of the job's stated skills this resume evidences."""
+    if not wanted:
+        return 0.0
+    text = resume.full_text().lower()
+    hits = sum(1 for skill in wanted if skill_in_text(skill, text))
+    return round(hits / len(wanted) * 100, 1)
+
+
+def compare(job: dict, named_resumes: list[tuple[str, MasterResume]]
+            ) -> list[ResumeRanking]:
+    """
+    Ranks several resumes against one job, best first.
+
+    Every figure here is arithmetic over the same matching the scorer uses —
+    no model can rank these more honestly than the numbers already do.
+    """
+    wanted = _job_skills(job)
+    rankings = []
+    for name, resume in named_resumes:
+        text = resume.full_text().lower()
+        listed = {skill.lower() for skill in resume.listed_skills()}
+        matched = [skill for skill in wanted if skill_in_text(skill, text)]
+        score, _checks = ats_report(resume, wanted)
+        rankings.append(ResumeRanking(
+            name=name,
+            match_percent=_match_percent(resume, wanted),
+            ats_score=score,
+            matched=matched,
+            missing=[skill for skill in wanted
+                     if not skill_in_text(skill, text)],
+            unmentioned=[skill for skill in matched
+                         if skill.lower() not in listed],
+            bullets=len(resume.all_bullets()),
+        ))
+    return sorted(rankings, key=lambda ranking: -ranking.combined)
+
+
+# ======================================================
 # PUBLIC API
 # ======================================================
 def optimise(resume: MasterResume, job: dict) -> OptimisedResume:

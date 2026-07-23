@@ -29,6 +29,7 @@ import optimizer
 import resume_model
 import resume_import
 import resume_parser
+import resumes
 import scraper_common
 import scraper_jobstreet
 import scraper_onlinejobs
@@ -117,6 +118,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--cover-letter", metavar="JOB",
                         help="Draft a cover letter for a job (job_key or URL) "
                              "and export it, then exit")
+    parser.add_argument("--compare", metavar="JOB",
+                        help="Rank every resume against a job, then exit")
+    parser.add_argument("--resume", metavar="NAME", default=None,
+                        help="Which resume to use (default: the one set by "
+                             "--set-default-resume)")
+    parser.add_argument("--list-resumes", action="store_true",
+                        help="List the resumes you maintain, then exit")
+    parser.add_argument("--set-default-resume", metavar="NAME",
+                        help="Choose the resume used when --resume is omitted")
     parser.add_argument("--tone", default=config.COVER_LETTER_TONE,
                         help="Cover letter tone: "
                              + ", ".join(cover_letter.available_tones()))
@@ -148,7 +158,8 @@ def _parse_args() -> argparse.Namespace:
     maintenance_only = (args.set_status or args.generate_skills
                         or args.backup or args.calibrate or args.stalled
                         or args.import_resume or args.tailor
-                        or args.cover_letter
+                        or args.cover_letter or args.compare
+                        or args.list_resumes or args.set_default_resume
                         or (args.prune_days is not None and not args.keyword))
     if not maintenance_only and (not args.resume_pdf or not args.keyword):
         parser.error("resume_pdf and keyword are required (unless using "
@@ -222,11 +233,14 @@ def _report_stalled() -> None:
 
 
 def _run_import_resume(args: argparse.Namespace) -> None:
-    """Bootstraps master_resume.md from the resume PDF."""
-    if os.path.exists(config.MASTER_RESUME_FILE):
-        logging.error("%s already exists — refusing to overwrite your edits. "
-                      "Delete or rename it first if you really want to "
-                      "re-import.", config.MASTER_RESUME_FILE)
+    """Bootstraps a resume in resumes/ from a PDF."""
+    db_handler.init_db()
+    name = args.resume or config.DEFAULT_RESUME_NAME
+    existing = resumes.get(name)
+    if existing is not None:
+        logging.error("A resume called '%s' already exists at %s — refusing "
+                      "to overwrite your edits. Import under another name "
+                      "with --resume <name>.", name, existing.path)
         return
 
     text = resume_parser.extract_text_from_pdf(args.resume_pdf)
@@ -236,15 +250,15 @@ def _run_import_resume(args: argparse.Namespace) -> None:
                         "rather than a scanned image?", args.resume_pdf)
         return
 
-    resume_import.write_draft(resume, config.MASTER_RESUME_FILE)
+    path = os.path.join(config.RESUMES_DIR, f"{name}.md")
+    resume_import.write_draft(resume, path)
     logging.info("Sections found: %s",
                  ", ".join(section.name for section in resume.sections))
     logging.info("Review %s and correct anything the import got wrong. From "
-                 "now on it is the source of truth, not the PDF.",
-                 config.MASTER_RESUME_FILE)
+                 "now on it is the source of truth, not the PDF.", path)
 
 
-def _load_job_and_resume(job_reference: str):
+def _load_job_and_resume(job_reference: str, resume_name: str | None = None):
     """
     Shared setup for the document commands. Returns (job, resume), or
     (None, None) after explaining what is missing.
@@ -254,12 +268,83 @@ def _load_job_and_resume(job_reference: str):
     if job is None:
         logging.error("No job matching '%s' in the database.", job_reference)
         return None, None
-    if not os.path.exists(config.MASTER_RESUME_FILE):
-        logging.error("No master resume at %s. Create one first: "
-                      "python main.py <resume.pdf> --import-resume",
-                      config.MASTER_RESUME_FILE)
+    reference = resumes.resolve(resume_name)
+    if reference is None:
         return None, None
-    return job, resume_model.load(config.MASTER_RESUME_FILE)
+    logging.info("Using resume '%s'.", reference.name)
+    return job, reference.load()
+
+
+def _run_list_resumes() -> None:
+    """Shows the resumes on disk and which one is the default."""
+    db_handler.init_db()
+    references = resumes.available()
+    if not references:
+        logging.warning("No resumes in %s yet. Create one with: "
+                        "python main.py <resume.pdf> --import-resume",
+                        config.RESUMES_DIR)
+        return
+    default = resumes.default_name()
+    logging.info("%d resume(s) in %s:", len(references), config.RESUMES_DIR)
+    for reference in references:
+        resume = reference.load()
+        marker = "*" if reference.name == default else " "
+        logging.info("  %s %-14s %2d sections, %2d skills, %2d bullets",
+                     marker, reference.name, len(resume.sections),
+                     len(resume.listed_skills()), len(resume.all_bullets()))
+    logging.info("  (* = used when --resume is omitted)")
+
+
+def _run_compare(args: argparse.Namespace) -> None:
+    """Ranks every resume against one job."""
+    db_handler.init_db()
+    job = db_handler.get_job(args.compare)
+    if job is None:
+        logging.error("No job matching '%s' in the database.", args.compare)
+        return
+    references = resumes.available()
+    if len(references) < 2:
+        logging.warning("Only %d resume(s) found — add another to %s to have "
+                        "something to compare.", len(references),
+                        config.RESUMES_DIR)
+        if not references:
+            return
+
+    rankings = optimizer.compare(
+        job, [(ref.name, ref.load()) for ref in references])
+
+    logging.info("=" * 70)
+    logging.info("%s @ %s", job["title"], job.get("company") or "unknown")
+    logging.info("=" * 70)
+    logging.info("  %-14s %7s %7s %7s   %s", "resume", "overall", "match",
+                 "ats", "missing")
+    for index, ranking in enumerate(rankings):
+        logging.info("  %-14s %6.1f%% %6.1f%% %6.1f    %s",
+                     ("→ " if index == 0 else "  ") + ranking.name,
+                     ranking.combined, ranking.match_percent,
+                     ranking.ats_score,
+                     ", ".join(ranking.missing[:4]) or "nothing")
+
+    best = rankings[0]
+    tied = [ranking.name for ranking in rankings
+            if ranking.combined == best.combined]
+    logging.info("")
+    if len(tied) > 1:
+        # Recommending one of several identical resumes would be arbitrary,
+        # and the tie itself is the useful information: nothing that
+        # distinguishes them is asked for here.
+        logging.info("%s score identically — nothing that separates them is "
+                     "asked for in this advert, so use whichever you prefer.",
+                     " and ".join(f"'{name}'" for name in tied))
+    else:
+        logging.info("Use '%s' for this job — it evidences %d of the %d "
+                     "skills the advert names, %.1f points ahead of '%s'.",
+                     best.name, len(best.matched),
+                     len(best.matched) + len(best.missing),
+                     best.combined - rankings[1].combined, rankings[1].name)
+    if best.unmentioned:
+        logging.info("Before sending, add to the Skills section: %s",
+                     ", ".join(best.unmentioned))
 
 
 def _export_all(document, stem: str, formats: str, writer) -> None:
@@ -275,7 +360,7 @@ def _export_all(document, stem: str, formats: str, writer) -> None:
 
 def _run_cover_letter(args: argparse.Namespace) -> None:
     """Drafts a cover letter for one job and exports it."""
-    job, resume = _load_job_and_resume(args.cover_letter)
+    job, resume = _load_job_and_resume(args.cover_letter, args.resume)
     if job is None:
         return
     if args.tone not in cover_letter.available_tones():
@@ -299,7 +384,7 @@ def _run_cover_letter(args: argparse.Namespace) -> None:
 
 def _run_tailor(args: argparse.Namespace) -> None:
     """Tailors the master resume to one job and exports it."""
-    job, resume = _load_job_and_resume(args.tailor)
+    job, resume = _load_job_and_resume(args.tailor, args.resume)
     if job is None:
         return
 
@@ -391,6 +476,16 @@ def main() -> None:
         return
     if args.cover_letter:
         _run_cover_letter(args)
+        return
+    if args.list_resumes:
+        _run_list_resumes()
+        return
+    if args.set_default_resume:
+        db_handler.init_db()
+        resumes.set_default(args.set_default_resume)
+        return
+    if args.compare:
+        _run_compare(args)
         return
     if args.backup:
         db_handler.backup_database(reason="manual")
