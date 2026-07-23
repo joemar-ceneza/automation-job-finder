@@ -345,9 +345,10 @@ def _offer_downloads(slot: str, job_key: str) -> None:
             key=f"{slot}_{path}", width="stretch")
 
 
-def _render_score_explanation(job: dict, resume_skills: list[str]) -> None:
+def _render_score_explanation(job: dict, resume_skills: list[str],
+                              resume_text: str = "") -> None:
     """Why this job scored what it scored — deterministic, no AI."""
-    result = explain.explain_job(job, resume_skills)
+    result = explain.explain_job(job, resume_skills, resume_text)
     for line in result.lines:
         st.markdown(f"- {line}")
 
@@ -495,7 +496,7 @@ def _render_job_detail(frame: pd.DataFrame) -> None:
     score_tab, tailor_tab, letter_tab = st.tabs(
         ["Why this score", "Tailor resume", "Cover letter"])
     with score_tab:
-        _render_score_explanation(job, resume_skills)
+        _render_score_explanation(job, resume_skills, resume.full_text())
     with tailor_tab:
         _render_tailor(job, resume)
     with letter_tab:

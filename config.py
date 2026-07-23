@@ -151,16 +151,18 @@ MAX_PLAUSIBLE_YEARS = (
 # A job that hits this many of your skills scores 100. Raise it if too many
 # jobs sit at 100; lower it if nothing breaks 50.
 #
-# Calibrated with `python main.py --calibrate` against 226 stored jobs on
-# 2026-07-23: the strongest advertisement lands at 83, the top 10% at 50+, and
-# the median at 8 — which is honest, because the median job in a keyword search
-# really does share only one skill with the resume.
+# Calibrated with `python main.py --calibrate` against 244 stored jobs on
+# 2026-07-23, 85% of them carrying a full description: the strongest
+# advertisement lands at 90, the top 10% at 57, and the median at 29.
 #
-# IMPORTANT: this value depends on how much text is scored. The figure above is
-# for teaser-only runs. Scoring full descriptions (--full-desc) finds far more
-# matches per job, so re-run --calibrate and expect a higher number if you make
-# --full-desc your normal mode.
-TARGET_MATCH_SKILLS = 4
+# IMPORTANT: this value depends on how much text is scored, and the difference
+# is not marginal. On search-card teasers the median job matched ONE of these
+# skills and this value calibrated to 4; on full descriptions it matches FOUR
+# and calibrates to 7. Keeping the teaser value after switching to --full-desc
+# clamped the best jobs at 100 and destroyed the ordering between them.
+#
+# So: run --full-desc as your normal mode, and re-run --calibrate if you stop.
+TARGET_MATCH_SKILLS = 7
 
 # Bumped whenever the scoring formula changes, so stored scores from an older
 # formula are never silently compared against new ones.
@@ -169,6 +171,11 @@ SCORE_SCALE_VERSION = 2
 # Below this many stored jobs, --calibrate refuses to suggest a value —
 # a percentile drawn from a handful of rows is noise dressed as a statistic.
 CALIBRATION_MIN_JOBS = 150
+
+# A stored description longer than this came from a detail page rather than a
+# search card, so --calibrate can report how much of the corpus was scored on
+# full text. Teasers on both sites run to a few hundred characters.
+FULL_DESCRIPTION_CHARS = 600
 
 # Alternate spellings for skills.txt entries. A skill counts as matched if
 # the skill itself OR any alias appears (whole-word) in the text.

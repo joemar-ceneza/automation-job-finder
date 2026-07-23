@@ -255,6 +255,39 @@ def mark_seen(job_keys: list[str]) -> None:
     logging.info("Updated last_seen for %d already-seen jobs.", len(job_keys))
 
 
+def update_descriptions(rows: list[dict]) -> list[str]:
+    """
+    Stores a fuller description for jobs already in the database.
+
+    Only replaces when the incoming text is longer, so a fast teaser-only run
+    never overwrites a full description fetched by an earlier --full-desc run.
+    Returns the job_keys actually updated.
+    """
+    candidates = [(row["job_key"], row.get("description") or "")
+                  for row in rows if (row.get("description") or "").strip()]
+    if not candidates:
+        return []
+
+    updated: list[str] = []
+    with closing(_connect()) as connection, connection:
+        for job_key, description in candidates:
+            existing = connection.execute(
+                "SELECT description FROM jobs WHERE job_key = ?",
+                (job_key,)).fetchone()
+            if existing is None:
+                continue
+            if len(description) <= len(existing["description"] or ""):
+                continue
+            connection.execute(
+                "UPDATE jobs SET description = ? WHERE job_key = ?",
+                (description, job_key))
+            updated.append(job_key)
+    if updated:
+        logging.info("Stored a fuller description for %d job(s).",
+                     len(updated))
+    return updated
+
+
 def fetch_jobs(job_keys: list[str]) -> list[dict]:
     """Returns stored rows (with their original scores) for the given keys."""
     if not job_keys:

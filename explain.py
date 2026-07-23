@@ -47,12 +47,20 @@ def _split_matched(matched_skills: str) -> tuple[list[str], list[str]]:
 
 
 def _missing_skills(job_title: str, job_text: str,
-                    resume_skills: list[str]) -> list[str]:
-    """Skills the advertisement asks for that the resume does not show."""
-    held = {skill.lower() for skill in resume_skills}
+                    resume_text: str) -> list[str]:
+    """
+    Skills the advertisement asks for that the resume does not show.
+
+    Matched against the resume TEXT, alias-aware, rather than by comparing
+    names to the skills list. The extractor speaks MASTER_SKILLS ("React JS",
+    "REST API") while skills.txt uses your own wording ("React.js", "REST API
+    development"), so a name comparison reported skills as missing that are
+    plainly in the resume.
+    """
+    lowered = (resume_text or "").lower()
     wanted = skill_extractor.extract_skills(job_title, job_text)
     return [skill for skill, _category, _in_title in wanted
-            if skill.lower() not in held]
+            if not skill_in_text(skill, lowered)]
 
 
 def _describe(explanation: ScoreExplanation, total_jobs: int) -> list[str]:
@@ -102,20 +110,25 @@ def _describe(explanation: ScoreExplanation, total_jobs: int) -> list[str]:
 # ======================================================
 # PUBLIC API
 # ======================================================
-def explain_job(job: dict, resume_skills: list[str]) -> ScoreExplanation:
+def explain_job(job: dict, resume_skills: list[str],
+                resume_text: str = "") -> ScoreExplanation:
     """
     Builds a full explanation for one stored job row.
     Expects the row shape returned by db_handler.fetch_all_jobs().
+
+    resume_text is what "missing" is judged against; without it the check
+    falls back to the skill names, which under-reports what you already have.
     """
     title_matches, body_matches = _split_matched(job.get("matched_skills", ""))
     body_text = job.get("description") or job.get("teaser") or ""
+    haystack = resume_text or " ".join(resume_skills)
 
     explanation = ScoreExplanation(
         job_key=job.get("job_key", ""),
         score_percent=job.get("score_percent") or 0.0,
         title_matches=title_matches,
         body_matches=body_matches,
-        missing=_missing_skills(job.get("title", ""), body_text, resume_skills),
+        missing=_missing_skills(job.get("title", ""), body_text, haystack),
     )
     explanation.points_earned = (
         len(title_matches) * config.TITLE_MATCH_WEIGHT

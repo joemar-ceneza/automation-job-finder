@@ -332,7 +332,18 @@ def _run_calibrate() -> None:
             result["sample"], config.CALIBRATION_MIN_JOBS)
         return
 
-    logging.info("Scale options across %d stored jobs:", result["sample"])
+    share = (result["with_full_text"] / result["sample"] * 100
+             if result["sample"] else 0)
+    logging.info("Scale options across %d stored jobs.", result["sample"])
+    logging.info("  %d of them (%.0f%%) were scored on a full description "
+                 "rather than a search-card teaser.",
+                 result["with_full_text"], share)
+    logging.info("  The median job matches %d of your skills.",
+                 result["median_matches"])
+    if share < 50:
+        logging.warning("  Most of this corpus is teaser-only, so the "
+                        "suggestion below will not hold once you run with "
+                        "--full-desc. Consider doing that first.")
     logging.info("  %-3s %8s %8s %8s", "K", "median", "p90", "max")
     for target, median, p90, top in result["table"]:
         marker = "  <-- suggested" if target == result["suggested"] else ""
@@ -475,6 +486,19 @@ def main() -> None:
     db_handler.insert_jobs(new_rows)
     db_handler.mark_seen(list(seen_keys))
     db_handler.replace_job_skills(skill_extractor.extract_for_rows(new_rows))
+
+    # A job seen before may now carry a full description (--full-desc), and
+    # its stored score was computed from the teaser alone. Re-score only those.
+    enriched = db_handler.update_descriptions(
+        [asdict(job) for job in jobs if job.job_key in seen_keys])
+    if enriched:
+        refreshed = db_handler.fetch_jobs(enriched)
+        db_handler.update_scores(matcher.rank_jobs(refreshed, resume_skills))
+        db_handler.replace_job_skills(
+            skill_extractor.extract_for_rows(refreshed))
+        logging.info("Re-scored %d job(s) against their fuller description.",
+                     len(enriched))
+
     db_handler.mark_duplicates(dedupe.find_duplicates(db_handler.fetch_all_jobs()))
 
     # Step 6: Export ranked CSV + HTML report

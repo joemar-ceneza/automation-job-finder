@@ -42,9 +42,19 @@ denominator  = 3 * min(len(resume_skills), TARGET_MATCH)
 score        = min(100, weighted / denominator * 100)
 ```
 
-Calibrate so the best jobs land at 80–95 and the median near 40. Store the scale
-version in `meta` so old and new scores are never silently compared, then
-`--rescore`.
+Calibrate so the best jobs land at 80–95. Store the scale version in `meta` so
+old and new scores are never silently compared, then `--rescore`.
+
+> **The scale depends on how much text you score.** `--calibrate` reports what
+> share of the corpus carries a full description. Scoring 200-character search
+> teasers finds roughly one skill in the median job; scoring full descriptions
+> finds several times more, which moves the right `TARGET_MATCH_SKILLS`
+> substantially. Calibrate on the mode you actually run, and re-run
+> `--calibrate` if you change it.
+>
+> A low median is not a bug to tune away. Most results of a keyword search
+> genuinely are not a match for you, and a scale forced to centre on 50 would
+> flatter bad jobs. Pin the scale to the top of the distribution instead.
 
 ### 1.2 skills.txt has drifted from the alias map
 

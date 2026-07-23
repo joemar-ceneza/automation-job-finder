@@ -92,7 +92,20 @@ def suggest_target_match(stored_rows: list[dict]) -> dict:
     weights = sorted(_weighted_from_matched(row.get("matched_skills", ""))
                      for row in stored_rows)
     if len(weights) < config.CALIBRATION_MIN_JOBS:
-        return {"suggested": None, "sample": len(weights), "table": []}
+        return {"suggested": None, "sample": len(weights), "table": [],
+                "with_full_text": 0, "median_matches": 0.0}
+
+    # How much text the scores were computed from decides the answer, so
+    # report it: a corpus of teasers calibrates to a very different value
+    # than the same corpus with full descriptions.
+    with_full_text = sum(
+        1 for row in stored_rows
+        if len(row.get("description") or "") > config.FULL_DESCRIPTION_CHARS)
+    match_counts = sorted(
+        len([part for part in (row.get("matched_skills") or "").split(",")
+             if part.strip()])
+        for row in stored_rows)
+    median_matches = match_counts[len(match_counts) // 2]
 
     table = []
     best = None
@@ -104,7 +117,9 @@ def suggest_target_match(stored_rows: list[dict]) -> dict:
                       round(scaled[int(len(scaled) * 0.90)], 1), round(top, 1)))
         if best is None and 80 <= top <= 95:
             best = target
-    return {"suggested": best, "sample": len(weights), "table": table}
+    return {"suggested": best, "sample": len(weights), "table": table,
+            "with_full_text": with_full_text,
+            "median_matches": median_matches}
 
 
 # ======================================================
