@@ -75,27 +75,83 @@ def _now() -> str:
 
 
 # ======================================================
+# PUBLIC API — BACKUP
+# ======================================================
+def _prune_backups() -> None:
+    """Deletes the oldest backups beyond config.BACKUP_KEEP."""
+    if not os.path.isdir(config.BACKUP_DIR):
+        return
+    backups = sorted(
+        (entry.path for entry in os.scandir(config.BACKUP_DIR)
+         if entry.name.startswith("jobs_") and entry.name.endswith(".db")),
+        reverse=True,
+    )
+    for stale in backups[config.BACKUP_KEEP:]:
+        os.remove(stale)
+        logging.info("Removed old backup %s", stale)
+
+
+def backup_database(reason: str = "manual") -> str | None:
+    """
+    Copies the database to output/backups/ using SQLite's online backup API,
+    which is safe even if the file is being written. Returns the backup path,
+    or None when there is no database to copy yet.
+    """
+    if not os.path.exists(config.DB_PATH):
+        logging.info("No database at %s yet — nothing to back up.",
+                     config.DB_PATH)
+        return None
+
+    os.makedirs(config.BACKUP_DIR, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = os.path.join(config.BACKUP_DIR, f"jobs_{timestamp}_{reason}.db")
+    with closing(_connect()) as source, closing(sqlite3.connect(path)) as target:
+        source.backup(target)
+    logging.info("Database backed up to %s", path)
+    _prune_backups()
+    return path
+
+
+# ======================================================
 # PUBLIC API — SETUP
 # ======================================================
 def init_db() -> None:
-    """Creates the jobs/meta tables if missing and adds missing columns."""
+    """
+    Creates the jobs/meta tables if missing and adds missing columns.
+    Backs the database up first whenever a migration would actually change it.
+    """
     with closing(_connect()) as connection, connection:
         connection.execute(_SCHEMA)
         connection.execute(_META_SCHEMA)
+
+    # Work out whether anything will be altered BEFORE altering it, so the
+    # backup captures the pre-migration state.
+    with closing(_connect()) as connection:
         columns = {row["name"] for row in
                    connection.execute("PRAGMA table_info(jobs)")}
-        for column, column_type in _MIGRATED_COLUMNS.items():
-            if column not in columns:
-                connection.execute(
-                    f"ALTER TABLE jobs ADD COLUMN {column} {column_type}")
-                logging.info("Migrated database: added %s column.", column)
+        pending_columns = [column for column in _MIGRATED_COLUMNS
+                           if column not in columns]
+        legacy_keys = connection.execute(
+            "SELECT COUNT(*) FROM jobs "
+            "WHERE job_key LIKE 'id:%' OR job_key LIKE 'tc:%'"
+        ).fetchone()[0]
+
+    if pending_columns or legacy_keys:
+        backup_database(reason="premigration")
+
+    with closing(_connect()) as connection, connection:
+        for column in pending_columns:
+            connection.execute(
+                f"ALTER TABLE jobs ADD COLUMN {column} "
+                f"{_MIGRATED_COLUMNS[column]}")
+            logging.info("Migrated database: added %s column.", column)
         # Rows from the single-site era have unprefixed keys ("id:123") —
         # prefix them with jobstreet: so they match the new multi-site keys.
-        cursor = connection.execute(
-            """UPDATE jobs SET job_key = 'jobstreet:' || job_key,
-                               source = 'jobstreet'
-               WHERE job_key LIKE 'id:%' OR job_key LIKE 'tc:%'""")
-        if cursor.rowcount:
+        if legacy_keys:
+            cursor = connection.execute(
+                """UPDATE jobs SET job_key = 'jobstreet:' || job_key,
+                                   source = 'jobstreet'
+                   WHERE job_key LIKE 'id:%' OR job_key LIKE 'tc:%'""")
             logging.info("Migrated database: prefixed %d job keys with "
                          "'jobstreet:'.", cursor.rowcount)
 

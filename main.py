@@ -95,6 +95,11 @@ def _parse_args() -> argparse.Namespace:
                         help="Draft a skill list from your resume PDF into "
                              "skills_draft.txt (review it, then replace "
                              "skills.txt), then exit")
+    parser.add_argument("--backup", action="store_true",
+                        help="Copy the database to output/backups/, then exit")
+    parser.add_argument("--calibrate", action="store_true",
+                        help="Suggest a TARGET_MATCH_SKILLS value from your "
+                             "stored jobs, then exit")
     parser.add_argument("--email", action="store_true",
                         help="Email a digest of new matches via Gmail SMTP (see .env.example)")
     parser.add_argument("--out", default=config.DEFAULT_OUTPUT_CSV,
@@ -107,6 +112,7 @@ def _parse_args() -> argparse.Namespace:
         parser.error("--generate-skills needs your resume PDF, e.g. "
                      "python main.py resume.pdf --generate-skills")
     maintenance_only = (args.set_status or args.generate_skills
+                        or args.backup or args.calibrate
                         or (args.prune_days is not None and not args.keyword))
     if not maintenance_only and (not args.resume_pdf or not args.keyword):
         parser.error("resume_pdf and keyword are required (unless using "
@@ -162,6 +168,33 @@ def _run_maintenance(args: argparse.Namespace) -> None:
         db_handler.prune_stale(args.prune_days)
 
 
+def _run_calibrate() -> None:
+    """Suggests a TARGET_MATCH_SKILLS value from the stored corpus."""
+    db_handler.init_db()
+    result = matcher.suggest_target_match(db_handler.fetch_all_jobs())
+    if not result["table"]:
+        logging.warning(
+            "Only %d stored jobs — need at least %d before a suggestion means "
+            "anything. Scrape more, then run --calibrate again.",
+            result["sample"], config.CALIBRATION_MIN_JOBS)
+        return
+
+    logging.info("Scale options across %d stored jobs:", result["sample"])
+    logging.info("  %-3s %8s %8s %8s", "K", "median", "p90", "max")
+    for target, median, p90, top in result["table"]:
+        marker = "  <-- suggested" if target == result["suggested"] else ""
+        logging.info("  %-3d %8.1f %8.1f %8.1f%s", target, median, p90, top,
+                     marker)
+
+    if result["suggested"] is None:
+        logging.warning("No value put the median in 30-50 with a sensible top "
+                        "end — pick from the table by eye.")
+        return
+    logging.info("Set TARGET_MATCH_SKILLS = %d in config.py (currently %d), "
+                 "then run --rescore.", result["suggested"],
+                 config.TARGET_MATCH_SKILLS)
+
+
 def _run_generate_skills(args: argparse.Namespace) -> None:
     """Drafts a skill list from the resume PDF into skills_draft.txt."""
     resume_text = resume_parser.extract_text_from_pdf(args.resume_pdf)
@@ -185,6 +218,12 @@ def main() -> None:
 
     if args.generate_skills:
         _run_generate_skills(args)
+        return
+    if args.backup:
+        db_handler.backup_database(reason="manual")
+        return
+    if args.calibrate:
+        _run_calibrate()
         return
     if args.set_status or (args.prune_days is not None and not args.keyword):
         _run_maintenance(args)
@@ -234,14 +273,23 @@ def main() -> None:
 
     current_hash = _skills_hash(resume_skills)
     stored_hash = db_handler.get_meta("skills_hash")
+    stored_scale = db_handler.get_meta("score_scale")
+    current_scale = str(config.SCORE_SCALE_VERSION)
     if args.rescore:
         rescored = matcher.rank_jobs(db_handler.fetch_all_jobs(), resume_skills)
         db_handler.update_scores(rescored)
+        db_handler.set_meta("score_scale", current_scale)
+    elif stored_scale and stored_scale != current_scale:
+        logging.warning("Stored scores use scale v%s but this build scores on "
+                        "v%s — the two are NOT comparable. Run with --rescore "
+                        "to restate them.", stored_scale, current_scale)
     elif stored_hash and stored_hash != current_hash:
         logging.warning("Your matched skill list changed since jobs were last "
                         "scored — stored scores may be stale. Run with "
                         "--rescore to refresh them.")
     db_handler.set_meta("skills_hash", current_hash)
+    if not stored_scale:
+        db_handler.set_meta("score_scale", current_scale)
 
     seen_keys = db_handler.get_existing_keys([job.job_key for job in jobs])
     new_jobs = [job for job in jobs if job.job_key not in seen_keys]

@@ -31,8 +31,13 @@ def _score_job(title: str, body: str,
     """
     Weighted keyword score: a skill found in the job title counts
     TITLE_MATCH_WEIGHT, a skill found only in the body counts
-    BODY_MATCH_WEIGHT. The percentage is normalized against the maximum
-    possible (every skill appearing in the title).
+    BODY_MATCH_WEIGHT.
+
+    The percentage is normalized against a realistic strong match
+    (config.TARGET_MATCH_SKILLS skills, weighted as if found in the title)
+    rather than against every skill appearing in the title — that ceiling is
+    unreachable, so it compressed every job into a narrow band near zero.
+    Scores are capped at 100.
     Returns (score_percent, title_matches, body_matches).
     """
     if not resume_skills:
@@ -50,8 +55,55 @@ def _score_job(title: str, body: str,
 
     weighted = (len(title_matches) * config.TITLE_MATCH_WEIGHT
                 + len(body_matches) * config.BODY_MATCH_WEIGHT)
-    max_weighted = len(resume_skills) * config.TITLE_MATCH_WEIGHT
-    return round(weighted / max_weighted * 100, 1), title_matches, body_matches
+    target = min(len(resume_skills), max(1, config.TARGET_MATCH_SKILLS))
+    max_weighted = target * config.TITLE_MATCH_WEIGHT
+    score = min(100.0, weighted / max_weighted * 100)
+    return round(score, 1), title_matches, body_matches
+
+
+# ======================================================
+# SCALE CALIBRATION
+# ======================================================
+def _weighted_from_matched(matched_skills: str) -> float:
+    """Rebuilds a job's raw weighted score from its stored matched_skills."""
+    parts = [part.strip() for part in (matched_skills or "").split(",")
+             if part.strip()]
+    title_hits = sum(1 for part in parts if part.endswith("(title)"))
+    body_hits = len(parts) - title_hits
+    return (title_hits * config.TITLE_MATCH_WEIGHT
+            + body_hits * config.BODY_MATCH_WEIGHT)
+
+
+def suggest_target_match(stored_rows: list[dict]) -> dict:
+    """
+    Derives a TARGET_MATCH_SKILLS value from stored jobs.
+
+    The scale is pinned to the TOP of the distribution, not the middle: in a
+    job search most advertisements genuinely are not a match, so a low median
+    is correct and a scale forced to centre on 50 would flatter bad jobs. A
+    good value puts the strongest job in the corpus at 80-95 — high enough to
+    read as "excellent", short of the 100 clamp that would erase the ordering
+    between the best few.
+
+    Returns {"suggested": int|None, "sample": int,
+             "table": [(k, median, p90, max)]}.
+    """
+    weights = sorted(_weighted_from_matched(row.get("matched_skills", ""))
+                     for row in stored_rows)
+    if len(weights) < config.CALIBRATION_MIN_JOBS:
+        return {"suggested": None, "sample": len(weights), "table": []}
+
+    table = []
+    best = None
+    for target in range(3, 16):
+        scaled = [min(100.0, weight / (target * config.TITLE_MATCH_WEIGHT) * 100)
+                  for weight in weights]
+        top = max(scaled)
+        table.append((target, round(scaled[len(scaled) // 2], 1),
+                      round(scaled[int(len(scaled) * 0.90)], 1), round(top, 1)))
+        if best is None and 80 <= top <= 95:
+            best = target
+    return {"suggested": best, "sample": len(weights), "table": table}
 
 
 # ======================================================

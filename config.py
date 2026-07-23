@@ -21,6 +21,8 @@ LOG_FILE = os.path.join(LOGS_DIR, "automation.log")
 LOG_MAX_BYTES = 5 * 1024 * 1024  # rotate automation.log at 5 MB
 LOG_BACKUP_COUNT = 3  # keep automation.log.1 … .3
 DB_PATH = os.path.join(OUTPUT_DIR, "jobs.db")
+BACKUP_DIR = os.path.join(OUTPUT_DIR, "backups")
+BACKUP_KEEP = 10  # oldest backups beyond this are deleted
 DEFAULT_SKILLS_FILE = os.path.join(BASE_DIR, "skills.txt")
 DEFAULT_SKILLS_DRAFT = os.path.join(BASE_DIR, "skills_draft.txt")
 DEFAULT_OUTPUT_CSV = os.path.join(OUTPUT_DIR, "ranked_jobs.csv")
@@ -102,27 +104,83 @@ MAX_PLAUSIBLE_YEARS = (
     20  # ignore "years" numbers above this (e.g. "25 years in business")
 )
 
+# Scores are normalised against a REALISTIC strong match, not against every
+# skill in your list appearing in the job title — no advertisement contains
+# thirty-plus skills in its title, so that ceiling is unreachable and squashes
+# every score into a narrow band near zero.
+#
+# A job that hits this many of your skills scores 100. Raise it if too many
+# jobs sit at 100; lower it if nothing breaks 50.
+#
+# Calibrated with `python main.py --calibrate` against 226 stored jobs on
+# 2026-07-23: the strongest advertisement lands at 83, the top 10% at 50+, and
+# the median at 8 — which is honest, because the median job in a keyword search
+# really does share only one skill with the resume.
+#
+# IMPORTANT: this value depends on how much text is scored. The figure above is
+# for teaser-only runs. Scoring full descriptions (--full-desc) finds far more
+# matches per job, so re-run --calibrate and expect a higher number if you make
+# --full-desc your normal mode.
+TARGET_MATCH_SKILLS = 4
+
+# Bumped whenever the scoring formula changes, so stored scores from an older
+# formula are never silently compared against new ones.
+SCORE_SCALE_VERSION = 2
+
+# Below this many stored jobs, --calibrate refuses to suggest a value —
+# a percentile drawn from a handful of rows is noise dressed as a statistic.
+CALIBRATION_MIN_JOBS = 150
+
 # Alternate spellings for skills.txt entries. A skill counts as matched if
-# the skill itself OR any alias appears (whole-word) in the text. Keys must
-# match skills.txt lines exactly.
+# the skill itself OR any alias appears (whole-word) in the text.
+#
+# Keys must match skills.txt lines EXACTLY — the lookup is a plain dict get
+# with no normalisation, so renaming a line in skills.txt without renaming the
+# key here silently disables alias matching for it. Matching is already
+# case-insensitive, so an alias that differs only in case does nothing.
+#
+# Two groups of keys live here: the ones matching current skills.txt lines
+# (used for scoring) and the ones matching MASTER_SKILLS entries (used by
+# --generate-skills). Both are needed; they are not duplicates.
 SKILL_ALIASES = {
+    # --- current skills.txt lines -----------------------------------------
+    "Python": ["Python3", "Python 3"],
+    "JavaScript ES6": ["JavaScript", "ES6", "ECMAScript"],
+    "HTML 5": ["HTML5", "HTML"],
+    "CSS 3": ["CSS3", "CSS"],
+    "React.js": ["ReactJS", "React JS", "React"],
+    "Next.js": ["NextJS", "Next JS"],
+    "Tailwind CSS": ["Tailwind", "TailwindCSS"],
+    "Bootstrap 5": ["Bootstrap"],
+    "Sass": ["SCSS"],
+    "Responsive Web Design": ["Responsive Design", "Responsive Website",
+                              "Mobile Responsive"],
+    "Node.js": ["NodeJS", "Node JS", "Node"],
+    "Express.js": ["ExpressJS", "Express JS", "Express"],
+    "REST API development": ["REST API", "REST APIs", "RESTful API",
+                             "RESTful", "RESTful APIs"],
+    "API integration": ["API Integrations", "third-party APIs",
+                        "third party APIs"],
+    "Authentication and Security": ["Authentication", "Authorization",
+                                    "OAuth", "JWT"],
+    "MongoDB": ["Mongo"],
+    "PostgreSQL": ["Postgres"],
+    "Python scripting": ["scripting"],
+    "Data extraction": ["Web Scraping", "Web Scraper", "Scraping",
+                        "Data Scraping"],
+    "Process automation": ["Automation", "Workflow Automation",
+                           "Task Automation"],
+    "Bash command line": ["Bash", "Shell scripting"],
+    # --- MASTER_SKILLS entries (--generate-skills only) -------------------
     "React JS": ["ReactJS", "React.js", "React"],
     "Next JS": ["NextJS", "Next.js"],
     "Node JS": ["NodeJS", "Node.js"],
     "Express JS": ["ExpressJS", "Express.js", "Express"],
-    "JavaScript ES6": ["JavaScript", "ES6"],
-    "HTML 5": ["HTML5", "HTML"],
-    "CSS 3": ["CSS3", "CSS"],
-    "Bootstrap 5": ["Bootstrap"],
-    "Tailwind CSS": ["Tailwind", "TailwindCSS"],
-    "Sass": ["SCSS"],
     "REST API": ["RESTful API", "REST APIs", "RESTful"],
     "API Integration": ["API Integrations"],
     "Web Scraping": ["Web Scraper", "Scraping"],
-    "PostgreSQL": ["Postgres"],
     "GitHub (Version Control)": ["GitHub"],
     "Bash Command Line": ["Bash"],
-    "MongoDB": ["Mongo"],
     "Responsive Website": ["Responsive Design", "Responsive Web Design"],
     "Reporting": ["Reports"],
     "Debugging": ["Debug", "Troubleshooting"],
