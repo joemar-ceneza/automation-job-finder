@@ -9,11 +9,19 @@ Run with:
 Reads and writes ONLY the local SQLite database (output/jobs.db). Scraping
 still happens via main.py; run that (or schedule it) to refresh the data.
 """
+import os
+
 import pandas as pd
 import streamlit as st
 
 import config
+import cover_letter
 import db_handler
+import documents
+import explain
+import optimizer
+import resume_model
+import resume_parser
 import stages
 
 _TABLE_COLUMNS = ["status", "score_percent", "title", "company", "location",
@@ -289,6 +297,212 @@ def _render_analytics() -> None:
 
 
 # ======================================================
+# JOB DETAIL
+# ======================================================
+@st.cache_data(show_spinner=False)
+def _load_master_resume(mtime: float):
+    """
+    Reads the master resume, keyed by file mtime so edits are picked up
+    without restarting Streamlit.
+    """
+    resume = resume_model.load(config.MASTER_RESUME_FILE)
+    skills = resume_parser.find_matching_skills(
+        resume.full_text(), resume_parser.load_skills(config.DEFAULT_SKILLS_FILE))
+    return resume, skills
+
+
+def _master_resume():
+    """The resume and its matched skills, or (None, None) when absent."""
+    if not os.path.exists(config.MASTER_RESUME_FILE):
+        return None, None
+    return _load_master_resume(os.path.getmtime(config.MASTER_RESUME_FILE))
+
+
+def _remember(slot: str, job_key: str, paths: list[str]) -> None:
+    """Records generated files against the job they belong to."""
+    st.session_state[slot] = {"job_key": job_key, "paths": paths}
+
+
+def _offer_downloads(slot: str, job_key: str) -> None:
+    """
+    One download button per generated file, but only for the job currently
+    selected. Without the job check the buttons linger after switching jobs
+    and quietly offer the previous job's documents — which is how someone
+    sends the wrong cover letter.
+    """
+    stored = st.session_state.get(slot)
+    if not stored or stored["job_key"] != job_key:
+        return
+    for column, path in zip(st.columns(len(stored["paths"])),
+                            stored["paths"]):
+        if not os.path.exists(path):
+            continue
+        with open(path, "rb") as handle:
+            data = handle.read()
+        column.download_button(
+            f"Download {os.path.splitext(path)[1].lstrip('.').upper()}",
+            data=data, file_name=os.path.basename(path),
+            key=f"{slot}_{path}", width="stretch")
+
+
+def _render_score_explanation(job: dict, resume_skills: list[str]) -> None:
+    """Why this job scored what it scored — deterministic, no AI."""
+    result = explain.explain_job(job, resume_skills)
+    for line in result.lines:
+        st.markdown(f"- {line}")
+
+    if result.title_matches or result.body_matches:
+        st.caption("Matched skills")
+        chips = ([f"**{skill}** (title)" for skill in result.title_matches]
+                 + list(result.body_matches))
+        st.markdown(" · ".join(chips))
+
+
+def _render_tailor(job: dict, resume) -> None:
+    """Standard-mode resume optimiser with export."""
+    result = optimizer.optimise(resume, job)
+
+    left, right = st.columns([1, 2])
+    left.metric("ATS score", f"{result.ats_score:.0f}/100")
+    with right:
+        for change in result.changes:
+            st.markdown(f"- {change}")
+
+    with st.expander("ATS breakdown"):
+        for check in result.checks:
+            share = check.points / check.max_points if check.max_points else 0
+            st.markdown(f"**{check.name}** — {check.points:.1f} / "
+                        f"{check.max_points:.0f}")
+            st.progress(min(1.0, share))
+            st.caption(check.detail)
+
+    if st.button("Generate tailored resume", key="tailor_go",
+                 type="primary", width="stretch"):
+        stem = documents.slugify(f"{job['title']}-{job.get('company') or ''}")
+        paths = [documents.write(result.resume,
+                                 os.path.join(config.DOCUMENTS_DIR,
+                                              f"{stem}.{fmt}"), fmt)
+                 for fmt in config.DOCUMENT_FORMATS]
+        _remember("tailor_files", job["job_key"], paths)
+        st.success(f"Written to {config.DOCUMENTS_DIR}")
+
+    _offer_downloads("tailor_files", job["job_key"])
+
+
+def _render_cover_letter(job: dict, resume) -> None:
+    """Standard-mode cover letter with export."""
+    tones = cover_letter.available_tones()
+    if not tones:
+        st.warning(f"No templates found in {config.COVER_LETTER_TEMPLATE_DIR}.")
+        return
+
+    controls = st.columns([1, 1])
+    tone = controls[0].selectbox(
+        "Tone", tones,
+        index=tones.index(config.COVER_LETTER_TONE)
+        if config.COVER_LETTER_TONE in tones else 0)
+    recipient = controls[1].text_input(
+        "Addressed to", value=config.COVER_LETTER_RECIPIENT)
+
+    letter = cover_letter.compose(resume, job, tone=tone, recipient=recipient)
+    st.text_area("Draft", letter.to_text(), height=340,
+                 label_visibility="collapsed")
+    st.caption("Read it before sending — a template letter reads like one, "
+               "and the opening line is usually worth rewriting yourself.")
+
+    if st.button("Save cover letter", key="letter_go", type="primary",
+                 width="stretch"):
+        stem = documents.slugify(
+            f"cover-letter-{job['title']}-{job.get('company') or ''}")
+        paths = [documents.write_letter(letter,
+                                        os.path.join(config.DOCUMENTS_DIR,
+                                                     f"{stem}.{fmt}"), fmt)
+                 for fmt in config.DOCUMENT_FORMATS]
+        _remember("letter_files", job["job_key"], paths)
+        st.success(f"Written to {config.DOCUMENTS_DIR}")
+
+    _offer_downloads("letter_files", job["job_key"])
+
+
+def _render_stage_control(job: dict) -> None:
+    """Move the application and record a note, from the detail view."""
+    current = stages.parse(job.get("status"))
+    moves = stages.allowed_moves(current)
+
+    columns = st.columns([1, 2])
+    columns[0].markdown(f"Stage  \n**{str(current).title()}**")
+    if moves:
+        choice = columns[1].selectbox(
+            "Move to", ["—", *[str(move) for move in moves]],
+            key=f"detail_move_{job['job_key']}")
+        if choice != "—":
+            db_handler.record_stage(job["job_key"], choice)
+            st.rerun()
+    else:
+        columns[1].caption("This stage is final.")
+
+    note = st.text_area("Notes", value=job.get("notes") or "", height=90,
+                        key=f"note_{job['job_key']}")
+    if st.button("Save note", key=f"save_note_{job['job_key']}"):
+        db_handler.set_note(job["job_key"], note)
+        st.success("Note saved.")
+
+    history = db_handler.stage_history(job["job_key"])
+    if history:
+        with st.expander(f"History ({len(history)})"):
+            for event in history:
+                st.caption(f"{event['occurred_at'][:16]} — {event['stage']}"
+                           + (f" · {event['note']}" if event["note"] else ""))
+
+
+def _render_job_detail(frame: pd.DataFrame) -> None:
+    """Everything about one job: why it scored, and what to send."""
+    if frame.empty:
+        st.info("No jobs match the current filters.")
+        return
+
+    options = frame["job_key"].tolist()
+    labels = {
+        row["job_key"]: f"{row['score_percent']:.0f}%  {row['title'][:60]}"
+                        f"  ·  {row['company'] or '—'}"
+        for _, row in frame.iterrows()
+    }
+    job_key = st.selectbox("Job", options, format_func=lambda key: labels[key])
+    job = db_handler.get_job(job_key)
+    if job is None:
+        st.error("That job is no longer in the database.")
+        return
+
+    st.markdown(f"### {job['title']}")
+    st.caption(f"{job.get('company') or 'Employer not published'} · "
+               f"{job.get('location') or '—'} · {job.get('source')} · "
+               f"{job.get('salary') or 'No salary stated'}")
+    if job.get("url"):
+        st.markdown(f"[Open the original posting]({job['url']})")
+
+    _render_stage_control(job)
+    st.divider()
+
+    resume, resume_skills = _master_resume()
+    if resume is None:
+        st.info("No master resume yet. Create one to unlock tailoring and "
+                "cover letters:\n\n"
+                "`python main.py resume.pdf --import-resume`")
+        st.subheader("Why this score")
+        _render_score_explanation(job, [])
+        return
+
+    score_tab, tailor_tab, letter_tab = st.tabs(
+        ["Why this score", "Tailor resume", "Cover letter"])
+    with score_tab:
+        _render_score_explanation(job, resume_skills)
+    with tailor_tab:
+        _render_tailor(job, resume)
+    with letter_tab:
+        _render_cover_letter(job, resume)
+
+
+# ======================================================
 # PAGE
 # ======================================================
 def run_dashboard() -> None:
@@ -325,14 +539,17 @@ def run_dashboard() -> None:
             st.caption(f"{hidden} repeat posting(s) hidden — untick "
                        "*Hide repeat postings* in the sidebar to see them.")
 
-    matches_tab, board_tab, analytics_tab = st.tabs(
-        ["Matches", "Board", "Skill demand"])
+    matches_tab, detail_tab, board_tab, analytics_tab = st.tabs(
+        ["Matches", "Job detail", "Board", "Skill demand"])
 
     with matches_tab:
         st.caption("Change any row's Status, then click Save.")
         edited = _render_table(filtered.reset_index(drop=True))
         if st.button("Save status changes", type="primary"):
             _save_status_changes(filtered.reset_index(drop=True), edited)
+
+    with detail_tab:
+        _render_job_detail(filtered.reset_index(drop=True))
 
     with board_tab:
         _render_board(frame)
