@@ -97,6 +97,7 @@ add `--ai` to write real prose instead of filling a template:
 
 ```
 python main.py --cover-letter JOB --ai   # AI writes the letter body from your resume
+python main.py --interview JOB --ai      # AI drafts a grounded answer for each question
 python main.py --rewrite JOB             # tailor AND AI-rewrite the wording (needs a provider)
 python main.py --explain JOB --ai        # AI narrative on top of the deterministic score
 ```
@@ -180,9 +181,17 @@ Opens a local web page (nothing is hosted online) showing every stored job
 with search, status/site filters, minimum score/salary sliders, and headline
 counts. Change any row's **Status** dropdown (new / interested / applied /
 rejected / no answer) and click **Save status changes** — it writes straight
-to `output/jobs.db`. Job titles link to the original posting. Scraping still
-happens via `main.py`; run it (or schedule it) to refresh the data, then
-just refresh the dashboard page.
+to `output/jobs.db`. Job titles link to the original posting.
+
+**Everything the terminal does, the dashboard does too.** The **Run & tools**
+tab runs the full search pipeline (keywords, location, sites, pages, filters,
+full descriptions, email digest — every flag) and the one-shot commands
+(backup, calibrate, prune, generate skills, import resume, list stalled/resumes,
+AI usage) as buttons, streaming the output live. It runs the same `main.py`
+under the hood, so you can drive the whole tool from either the terminal or the
+UI — including the very first search into an empty database. The per-job
+**Job detail** tab covers tailoring, cover letters, interview prep, resume
+comparison, and every AI mode.
 
 ## Persistence & tracking
 - `output/jobs.db` (SQLite) is the source of truth. Each job stores its
@@ -268,6 +277,7 @@ automation-job-finder/
 ├── llm_providers.py       # Claude + OpenAI-compatible provider adapters
 ├── ai_rewrite.py          # AI bullet rewriting + code-enforced fabrication verifier
 ├── ai_cover_letter.py     # AI cover letters (--cover-letter --ai), same verifier
+├── ai_interview.py        # AI interview answers (--interview --ai), same verifier
 ├── ai_explain.py          # AI score narrative grounded in the deterministic facts
 ├── skills.txt             # Your customizable skill/keyword list
 ├── .env.example           # Template for Gmail credentials (copy to .env)

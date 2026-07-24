@@ -71,6 +71,9 @@ class AIExplanation:
     model: str = ""
     from_cache: bool = False
     ai_used: bool = False
+    # Why AI mode fell back, for surfacing in the CLI/UI when it does. Empty on
+    # success or when no provider was configured.
+    note: str = ""
 
 
 # ======================================================
@@ -101,21 +104,30 @@ def _build_request(base: ScoreExplanation, job: dict, effort: str) -> LLMRequest
         cache_salt=(base.job_key,))
 
 
-def _reject_contradictions(base: ScoreExplanation, narrative: dict) -> None:
+def _drop_contradicting_improvements(base: ScoreExplanation,
+                                     improvements: list[str]) -> list[str]:
     """
-    Guards against the model telling the candidate to learn what they have.
-    The improvements list is "things to acquire"; a matched skill appearing
-    there contradicts the ground truth, so the whole narrative is discarded.
+    Removes any "next step" that names a skill the resume already evidences —
+    telling the candidate to learn what they have. Only the offending items are
+    dropped; the rest of the narrative is kept.
+
+    This is deliberately lenient. A weaker local model (llama3.1 via Ollama,
+    say) often writes a perfectly good summary and then slips one matched skill
+    into its suggestions; discarding the whole explanation over that one line
+    threw away the useful 90%. The guard still protects the candidate from bad
+    advice — it just no longer punishes them for the model's slip.
     """
     matched = base.title_matches + base.body_matches
-    for suggestion in narrative.get("improvements", []):
-        text = suggestion.lower()
+    kept = []
+    for suggestion in improvements:
         clash = next((skill for skill in matched
-                      if skill_in_text(skill, text)), None)
+                      if skill_in_text(skill, suggestion.lower())), None)
         if clash:
-            raise LLMUnavailable(
-                f"Narrative told the candidate to improve {clash!r}, which the "
-                "resume already evidences — discarding it as unreliable.")
+            logging.info("Dropped an AI next-step naming %r, which the resume "
+                         "already evidences.", clash)
+            continue
+        kept.append(suggestion)
+    return kept
 
 
 # ======================================================
@@ -136,9 +148,9 @@ def enrich(job: dict, resume_skills: list[str], resume_text: str,
 
     try:
         response = provider.complete(_build_request(base, job, effort))
-        _reject_contradictions(base, response.data)
     except LLMUnavailable as error:
         logging.info("Showing the deterministic explanation only: %s", error)
+        result.note = str(error)
         return result
 
     narrative = response.data
@@ -146,7 +158,8 @@ def enrich(job: dict, resume_skills: list[str], resume_text: str,
     result.strengths = narrative.get("strengths", [])
     result.weaknesses = narrative.get("weaknesses", [])
     result.advice = narrative.get("advice", "")
-    result.improvements = narrative.get("improvements", [])
+    result.improvements = _drop_contradicting_improvements(
+        base, narrative.get("improvements", []))
     result.model = response.model
     result.from_cache = response.from_cache
     result.ai_used = True

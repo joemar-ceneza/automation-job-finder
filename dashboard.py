@@ -10,12 +10,15 @@ Reads and writes ONLY the local SQLite database (output/jobs.db). Scraping
 still happens via main.py; run that (or schedule it) to refresh the data.
 """
 import os
+import subprocess
+import sys
 
 import pandas as pd
 import streamlit as st
 
 import ai_cover_letter
 import ai_explain
+import ai_interview
 import ai_rewrite
 import config
 import cover_letter
@@ -36,6 +39,9 @@ _TABLE_COLUMNS = ["status", "score_percent", "title", "company", "location",
 
 # Cards rendered per board column before collapsing to a count.
 _BOARD_CARD_LIMIT = 8
+
+# Sites the Run tab can search — matches main.SITE_SCRAPERS.
+_SITE_OPTIONS = ["jobstreet", "onlinejobs"]
 
 
 # ======================================================
@@ -408,8 +414,10 @@ def _render_ai_narrative(job: dict, resume_skills: list[str],
     result = st.session_state.get(key)
     if result is None or not getattr(result, "ai_used", False):
         if result is not None:
+            note = getattr(result, "note", "")
             st.warning("The AI narrative was unavailable, so only the "
-                       "deterministic explanation above is shown.")
+                       "deterministic explanation above is shown."
+                       + (f"\n\nReason: {note}" if note else ""))
         return
 
     st.divider()
@@ -604,6 +612,44 @@ def _render_interview(job: dict, resume, resume_skills: list[str]) -> None:
     st.caption("These are talking points from your own resume — rehearse them "
                "in your words, don't read them.")
 
+    _render_ai_answers(job, resume, prep)
+
+
+def _render_ai_answers(job: dict, resume, prep) -> None:
+    """Optional AI-drafted answers, each verified against the resume."""
+    provider = llm.get_provider(db_handler)
+    if not provider.is_available():
+        st.caption("AI mode is off. Set a provider in `.env` to draft a full "
+                   "answer for each question.")
+        return
+
+    st.divider()
+    st.caption("AI mode can draft a suggested answer for each question, written "
+               "from your real accomplishments. Any answer that claims a skill "
+               "or number not in your resume is dropped.")
+    key = f"interview_ai_{job['job_key']}"
+    if st.button("Draft answers with AI", key=f"btn_{key}"):
+        with st.spinner("Drafting and fact-checking each answer…"):
+            st.session_state[key] = ai_interview.enrich(
+                resume, job, prep, provider, effort=config.AI_EFFORT)
+
+    result = st.session_state.get(key)
+    if result is None:
+        return
+    if not result.ai_used:
+        st.warning("AI answers were unavailable — the talking points above "
+                   "stand."
+                   + (f"\n\nReason: {result.note}" if result.note else ""))
+        return
+
+    st.markdown(f"**AI-drafted answers** · {result.model}"
+                + (" · cached" if result.from_cache else ""))
+    for answer in result.answers:
+        st.markdown(f"**{answer.prompt}**")
+        st.markdown(answer.answer)
+    st.caption("Rehearse these in your own words — the facts are yours, the "
+               "phrasing is a starting point.")
+
 
 def _render_comparison(job: dict) -> None:
     """Ranks every resume against this job — arithmetic, no AI."""
@@ -733,6 +779,170 @@ def _render_job_detail(frame: pd.DataFrame) -> None:
 
 
 # ======================================================
+# RUN & TOOLS (parity with the main.py CLI)
+# ======================================================
+def _quote(arg: str) -> str:
+    """Renders a command argument for display, quoting anything with spaces."""
+    return f'"{arg}"' if " " in arg else arg
+
+
+def _run_cli(arg_list: list[str]) -> None:
+    """
+    Runs `python main.py <args>` as a subprocess and streams its output live.
+    This is the same code path as the terminal — the dashboard just builds the
+    command from the form — so anything the CLI does is reachable from the UI.
+    """
+    command = [sys.executable, "main.py"] + arg_list
+    st.caption("Running: python " + " ".join(_quote(part) for part in
+                                              ["main.py"] + arg_list))
+    output = st.empty()
+    lines: list[str] = []
+    try:
+        process = subprocess.Popen(
+            command, cwd=config.BASE_DIR, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=True, bufsize=1)
+    except OSError as error:
+        st.error(f"Could not start the command: {error}")
+        return
+
+    for line in process.stdout:
+        lines.append(line.rstrip())
+        output.code("\n".join(lines[-500:]))
+    process.wait()
+    output.code("\n".join(lines[-500:]) or "(no output)")
+    if process.returncode == 0:
+        st.success("Done. Reload the page or switch tabs to see refreshed data.")
+    else:
+        st.error(f"Exited with code {process.returncode} — see the output "
+                 "above.")
+
+
+def _render_search_form() -> None:
+    """The full scrape/score pipeline — every search flag main.py accepts."""
+    st.subheader("Search for jobs")
+    st.caption("Runs the same pipeline as `python main.py` — scrape the "
+               "selected sites, score new jobs against your skills, and save "
+               "them to the database.")
+
+    resume_pdf = st.text_input("Resume PDF path", key="run_pdf",
+                               placeholder=r"C:\path\to\resume.pdf")
+    keyword = st.text_input(
+        "Keywords (comma-separated)", key="run_kw",
+        placeholder="python developer, automation engineer")
+
+    row1 = st.columns(3)
+    location = row1[0].text_input("Location", key="run_loc",
+                                  placeholder="Metro Manila")
+    pages = row1[1].number_input("Pages per keyword", 1, 20,
+                                 value=int(config.DEFAULT_PAGES), key="run_pages")
+    delay = row1[2].number_input("Delay between pages (s)", 0.0, 30.0,
+                                 value=float(config.DEFAULT_DELAY_SECONDS),
+                                 step=0.5, key="run_delay")
+    sites = st.multiselect("Sites", _SITE_OPTIONS,
+                           default=list(config.DEFAULT_SITES), key="run_sites")
+
+    row2 = st.columns(3)
+    max_years = row2[0].number_input("Your years of experience (0 = no filter)",
+                                     0, 50, value=0, key="run_years")
+    min_score = row2[1].number_input("Min score % (0 = no filter)", 0, 100,
+                                     value=0, key="run_minscore")
+    min_salary = row2[2].number_input("Min salary PHP (0 = no filter)", 0,
+                                      1_000_000, value=0, step=5000,
+                                      key="run_minsalary")
+
+    row3 = st.columns(4)
+    full_desc = row3[0].checkbox("Full descriptions", key="run_fulldesc",
+                                 help="Visit each job's page (slower, richer).")
+    only_new = row3[1].checkbox("Export only new", key="run_onlynew")
+    rescore = row3[2].checkbox("Re-score stored", key="run_rescore")
+    email = row3[3].checkbox("Email digest", key="run_email")
+
+    skills_path = st.text_input("Skills file", value=config.DEFAULT_SKILLS_FILE,
+                                key="run_skills")
+
+    if st.button("Run search", type="primary", key="run_search_btn"):
+        if not resume_pdf or not keyword:
+            st.error("A resume PDF path and at least one keyword are required.")
+            return
+        if not sites:
+            st.error("Select at least one site.")
+            return
+        args = [resume_pdf, keyword, "--site", ",".join(sites),
+                "--pages", str(int(pages)), "--delay", str(delay)]
+        if location:
+            args += ["--location", location]
+        if skills_path and skills_path != config.DEFAULT_SKILLS_FILE:
+            args += ["--skills", skills_path]
+        if max_years:
+            args += ["--max-years", str(int(max_years))]
+        if min_score:
+            args += ["--min-score", str(int(min_score))]
+        if min_salary:
+            args += ["--min-salary", str(int(min_salary))]
+        if full_desc:
+            args.append("--full-desc")
+        if only_new:
+            args.append("--only-new")
+        if rescore:
+            args.append("--rescore")
+        if email:
+            args.append("--email")
+        with st.spinner("Scraping and scoring — this can take a few minutes…"):
+            _run_cli(args)
+
+
+def _render_maintenance() -> None:
+    """The one-shot CLI commands, as buttons — no terminal needed."""
+    st.subheader("Maintenance & tools")
+    pdf = st.session_state.get("run_pdf", "")
+
+    row1 = st.columns(3)
+    if row1[0].button("Backup database", key="run_backup",
+                      width="stretch"):
+        _run_cli(["--backup"])
+    if row1[1].button("Calibrate score scale", key="run_calibrate",
+                      width="stretch"):
+        _run_cli(["--calibrate"])
+    if row1[2].button("List stalled applications", key="run_stalled",
+                      width="stretch"):
+        _run_cli(["--stalled"])
+
+    row2 = st.columns(3)
+    if row2[0].button("Show AI usage", key="run_aiusage", width="stretch"):
+        _run_cli(["--ai-usage"])
+    if row2[1].button("List resumes", key="run_listresumes", width="stretch"):
+        _run_cli(["--list-resumes"])
+    prune_days = row2[2].number_input("Prune jobs older than (days)", 1, 365,
+                                      value=30, key="run_prunedays")
+    if row2[2].button("Prune old jobs", key="run_prune", width="stretch"):
+        _run_cli(["--prune-days", str(int(prune_days))])
+
+    st.caption("These operate on the current database. The two below read your "
+               "resume PDF — set the path in the search form above first.")
+    row3 = st.columns(2)
+    if row3[0].button("Generate skills from PDF", key="run_genskills",
+                      width="stretch"):
+        if pdf:
+            _run_cli([pdf, "--generate-skills"])
+        else:
+            st.error("Enter your resume PDF path in the search form first.")
+    if row3[1].button("Import resume from PDF", key="run_importresume",
+                      width="stretch"):
+        if pdf:
+            _run_cli([pdf, "--import-resume"])
+        else:
+            st.error("Enter your resume PDF path in the search form first.")
+
+
+def _render_run_tab() -> None:
+    """Search + maintenance — full parity with the main.py terminal commands."""
+    _render_search_form()
+    st.divider()
+    _render_maintenance()
+    st.caption("Live progress is also written to `logs/automation.log`.")
+
+
+# ======================================================
 # PAGE
 # ======================================================
 def run_dashboard() -> None:
@@ -745,7 +955,9 @@ def run_dashboard() -> None:
     frame = _load_jobs(include_archived=st.session_state.get(
         "include_archived_value", False))
     if frame.empty:
-        st.warning("No jobs in the database yet. Run main.py first.")
+        st.warning("No jobs in the database yet. Run a search below to "
+                   "populate it — no terminal needed.")
+        _render_run_tab()
         return
 
     filters = _render_sidebar(frame)
@@ -770,8 +982,8 @@ def run_dashboard() -> None:
             st.caption(f"{hidden} repeat posting(s) hidden — untick "
                        "*Hide repeat postings* in the sidebar to see them.")
 
-    matches_tab, detail_tab, board_tab, analytics_tab = st.tabs(
-        ["Matches", "Job detail", "Board", "Skill demand"])
+    matches_tab, detail_tab, board_tab, analytics_tab, run_tab = st.tabs(
+        ["Matches", "Job detail", "Board", "Skill demand", "Run & tools"])
 
     with matches_tab:
         st.caption("Change any row's Status, then click Save.")
@@ -787,6 +999,9 @@ def run_dashboard() -> None:
 
     with analytics_tab:
         _render_analytics()
+
+    with run_tab:
+        _render_run_tab()
 
 
 run_dashboard()

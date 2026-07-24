@@ -97,19 +97,24 @@ def test_the_deterministic_numbers_are_never_replaced():
 
 
 # ======================================================
-# CONTRADICTION REJECTION (the reason grounding is worth it)
+# CONTRADICTION HANDLING (the reason grounding is worth it)
 # ======================================================
-def test_a_narrative_telling_you_to_learn_what_you_have_is_rejected():
+def test_a_next_step_naming_a_skill_you_have_is_dropped_not_the_narrative():
     """
-    The candidate has Playwright; a narrative telling them to improve it
-    contradicts the ground truth, so the whole narrative is discarded and the
-    deterministic explanation stands.
+    The candidate has Playwright; a "next step" telling them to improve it
+    contradicts the ground truth. Only that suggestion is dropped — the rest of
+    the narrative is kept, because a weaker model slipping one bad line should
+    not cost the whole explanation.
     """
-    contradicting = dict(GOOD_NARRATIVE,
-                         improvements=["Get more Playwright experience"])
+    contradicting = dict(
+        GOOD_NARRATIVE,
+        improvements=["Get more Playwright experience", "Learn Docker"])
     result = ai_explain.enrich(job(), RESUME_SKILLS, RESUME_TEXT,
                                FakeProvider(contradicting))
-    assert result.ai_used is False, "a contradicting narrative must be dropped"
+    assert result.ai_used is True
+    assert "Strong fit" in result.summary
+    assert result.improvements == ["Learn Docker"]
+    assert all("Playwright" not in step for step in result.improvements)
 
 
 def test_a_narrative_suggesting_a_genuinely_missing_skill_is_kept():
@@ -117,6 +122,15 @@ def test_a_narrative_suggesting_a_genuinely_missing_skill_is_kept():
     result = ai_explain.enrich(job(), RESUME_SKILLS, RESUME_TEXT,
                                FakeProvider(fine))
     assert result.ai_used is True
+    assert result.improvements == ["Learn Docker", "Try AWS"]
+
+
+def test_the_fallback_reason_is_captured_for_display():
+    """When the provider fails, the reason is exposed so the UI can show it."""
+    result = ai_explain.enrich(job(), RESUME_SKILLS, RESUME_TEXT,
+                               FailingProvider())
+    assert result.ai_used is False
+    assert "simulated outage" in result.note
 
 
 # ======================================================

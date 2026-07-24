@@ -20,6 +20,7 @@ from logging.handlers import RotatingFileHandler
 
 import ai_cover_letter
 import ai_explain
+import ai_interview
 import ai_rewrite
 import config
 import cover_letter
@@ -134,8 +135,8 @@ def _parse_args() -> argparse.Namespace:
                              "and talking points from your resume, then exit")
     parser.add_argument("--ai", action="store_true",
                         help="Use the configured AI provider to enrich "
-                             "--explain or --cover-letter (falls back to "
-                             "Standard if unavailable)")
+                             "--explain, --cover-letter or --interview (falls "
+                             "back to Standard if unavailable)")
     parser.add_argument("--ai-usage", action="store_true",
                         help="Show total AI token usage, then exit")
     parser.add_argument("--compare", metavar="JOB",
@@ -396,7 +397,7 @@ def _run_explain(args: argparse.Namespace) -> None:
 
 
 def _run_interview(args: argparse.Namespace) -> None:
-    """Prints an interview prep sheet for one job."""
+    """Prints an interview prep sheet for one job, optionally with AI answers."""
     job, resume = _load_job_and_resume(args.interview, args.resume)
     if job is None:
         return
@@ -412,8 +413,30 @@ def _run_interview(args: argparse.Namespace) -> None:
     for line in prep.lines:
         logging.info("  %s", line)
     logging.info("=" * 70)
-    logging.info("These are talking points from your own resume — rehearse "
-                 "them in your words, don't read them.")
+
+    if not args.ai:
+        logging.info("These are talking points from your own resume — rehearse "
+                     "them in your words, don't read them.")
+        return
+
+    provider = llm.get_provider(db_handler)
+    drafted = ai_interview.enrich(resume, job, prep, provider,
+                                  effort=config.AI_EFFORT)
+    if not drafted.ai_used:
+        logging.info("AI answers unavailable%s — the talking points above "
+                     "stand. Configure a provider in .env (see .env.example) "
+                     "to enable them.",
+                     f" ({drafted.note})" if drafted.note else "")
+        return
+
+    logging.info("AI-drafted answers (%s%s) — grounded in your resume, verified "
+                 "line by line:", drafted.model,
+                 ", cached" if drafted.from_cache else "")
+    for answer in drafted.answers:
+        logging.info("  Q: %s", answer.prompt)
+        logging.info("     %s", answer.answer)
+    logging.info("Rehearse these in your own words — the facts are yours, the "
+                 "phrasing is a starting point.")
 
 
 def _run_ai_usage() -> None:
