@@ -84,6 +84,7 @@ Once a job is in the database, these commands help you apply to it. `JOB` is a
 live in the dashboard's **Job detail** tab.
 
 ```
+python main.py --summary JOB         # condense the advert — sections + red flags
 python main.py --tailor JOB          # restructure your resume for the job (deterministic)
 python main.py --cover-letter JOB    # draft a cover letter from a template
 python main.py --explain JOB         # why the job scored what it did
@@ -98,6 +99,7 @@ add `--ai` to write real prose instead of filling a template:
 ```
 python main.py --cover-letter JOB --ai   # AI writes the letter body from your resume
 python main.py --interview JOB --ai      # AI drafts a grounded answer for each question
+python main.py --summary JOB --ai        # AI prose read: pros/cons, growth, subtler red flags
 python main.py --rewrite JOB             # tailor AND AI-rewrite the wording (needs a provider)
 python main.py --explain JOB --ai        # AI narrative on top of the deterministic score
 ```
@@ -271,6 +273,7 @@ automation-job-finder/
 ├── optimizer.py           # Deterministic resume tailoring + ATS scoring (--tailor)
 ├── explain.py             # Deterministic score explanation (--explain)
 ├── interview.py           # Deterministic interview prep sheet (--interview)
+├── summary.py             # Deterministic job summary + red flags (--summary)
 ├── cover_letter.py        # Template cover letters (--cover-letter)
 ├── documents.py           # Export resumes/letters to DOCX / PDF / Markdown
 ├── llm.py                 # AI transport layer: provider protocol, cache, factory
@@ -278,6 +281,7 @@ automation-job-finder/
 ├── ai_rewrite.py          # AI bullet rewriting + code-enforced fabrication verifier
 ├── ai_cover_letter.py     # AI cover letters (--cover-letter --ai), same verifier
 ├── ai_interview.py        # AI interview answers (--interview --ai), same verifier
+├── ai_summary.py          # AI job read (--summary --ai): pros/cons, growth, red flags
 ├── ai_explain.py          # AI score narrative grounded in the deterministic facts
 ├── skills.txt             # Your customizable skill/keyword list
 ├── .env.example           # Template for Gmail credentials (copy to .env)

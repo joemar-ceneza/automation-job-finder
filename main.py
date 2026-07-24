@@ -22,6 +22,7 @@ import ai_cover_letter
 import ai_explain
 import ai_interview
 import ai_rewrite
+import ai_summary
 import config
 import cover_letter
 import db_handler
@@ -42,6 +43,7 @@ import scraper_jobstreet
 import scraper_onlinejobs
 import skill_extractor
 import stages
+import summary
 
 # Site name -> scraper module. Each module exposes run_scraper().
 SITE_SCRAPERS = {
@@ -133,10 +135,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--interview", metavar="JOB",
                         help="Prepare for a job's interview — likely questions "
                              "and talking points from your resume, then exit")
+    parser.add_argument("--summary", metavar="JOB",
+                        help="Summarise a job — sections and red flags — then "
+                             "exit")
     parser.add_argument("--ai", action="store_true",
                         help="Use the configured AI provider to enrich "
-                             "--explain, --cover-letter or --interview (falls "
-                             "back to Standard if unavailable)")
+                             "--explain, --cover-letter, --interview or "
+                             "--summary (falls back to Standard if unavailable)")
     parser.add_argument("--ai-usage", action="store_true",
                         help="Show total AI token usage, then exit")
     parser.add_argument("--compare", metavar="JOB",
@@ -180,8 +185,8 @@ def _parse_args() -> argparse.Namespace:
                         or args.backup or args.calibrate or args.stalled
                         or args.import_resume or args.tailor
                         or args.cover_letter or args.compare or args.explain
-                        or args.interview or args.rewrite or args.ai_usage
-                        or args.list_resumes
+                        or args.interview or args.summary or args.rewrite
+                        or args.ai_usage or args.list_resumes
                         or args.set_default_resume
                         or (args.prune_days is not None and not args.keyword))
     if not maintenance_only and (not args.resume_pdf or not args.keyword):
@@ -439,6 +444,44 @@ def _run_interview(args: argparse.Namespace) -> None:
                  "phrasing is a starting point.")
 
 
+def _run_summary(args: argparse.Namespace) -> None:
+    """Prints a job summary, optionally with an AI prose summary."""
+    db_handler.init_db()
+    job = db_handler.get_job(args.summary)
+    if job is None:
+        logging.error("No job matching '%s' in the database.", args.summary)
+        return
+    result = summary.summarise(job)
+
+    logging.info("=" * 70)
+    for line in result.lines:
+        logging.info("  %s", line)
+    logging.info("=" * 70)
+
+    if not args.ai:
+        return
+
+    provider = llm.get_provider(db_handler)
+    enriched = ai_summary.enrich(job, result, provider, effort=config.AI_EFFORT)
+    if not enriched.ai_used:
+        logging.info("AI summary unavailable%s — the sections above stand. "
+                     "Configure a provider in .env (see .env.example) to enable "
+                     "it.", f" ({enriched.note})" if enriched.note else "")
+        return
+
+    logging.info("AI summary (%s%s):", enriched.model,
+                 ", cached" if enriched.from_cache else "")
+    logging.info("  %s", enriched.overview)
+    if enriched.pros:
+        logging.info("  Pros: %s", "; ".join(enriched.pros))
+    if enriched.cons:
+        logging.info("  Cons: %s", "; ".join(enriched.cons))
+    if enriched.growth:
+        logging.info("  Growth: %s", enriched.growth)
+    if enriched.red_flags:
+        logging.info("  Extra red flags: %s", "; ".join(enriched.red_flags))
+
+
 def _run_ai_usage() -> None:
     """Reports total AI token spend."""
     db_handler.init_db()
@@ -664,6 +707,9 @@ def main() -> None:
         return
     if args.interview:
         _run_interview(args)
+        return
+    if args.summary:
+        _run_summary(args)
         return
     if args.ai_usage:
         _run_ai_usage()

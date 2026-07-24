@@ -20,6 +20,7 @@ import ai_cover_letter
 import ai_explain
 import ai_interview
 import ai_rewrite
+import ai_summary
 import config
 import cover_letter
 import db_handler
@@ -32,6 +33,7 @@ import resume_model
 import resume_parser
 import resumes
 import stages
+import summary
 
 _TABLE_COLUMNS = ["status", "score_percent", "title", "company", "location",
                   "source", "work_arrangement", "salary", "listing_date",
@@ -377,6 +379,75 @@ def _offer_downloads(slot: str, job_key: str) -> None:
             f"Download {os.path.splitext(path)[1].lstrip('.').upper()}",
             data=data, file_name=os.path.basename(path),
             key=f"{slot}_{path}", width="stretch")
+
+
+def _render_summary(job: dict) -> None:
+    """Scannable job summary — sections and red flags, with optional AI."""
+    result = summary.summarise(job)
+
+    facts = [result.work_arrangement]
+    if result.salary_text:
+        facts.append(result.salary_text)
+    if result.required_years:
+        facts.append(f"{result.required_years}+ yrs")
+    st.markdown(" · ".join(facts))
+
+    for flag in result.red_flags:
+        st.warning(f"⚠ {flag}")
+
+    labels = [("responsibilities", "What you'd do"),
+              ("requirements", "What they require"),
+              ("nice_to_have", "Nice to have"),
+              ("benefits", "What they offer")]
+    for attribute, heading in labels:
+        items = getattr(result, attribute)
+        if items:
+            st.markdown(f"**{heading}**")
+            for item in items:
+                st.markdown(f"- {item}")
+
+    if not result.has_sections():
+        st.info("This advert has no clear sections to extract — read the full "
+                "posting via the job title link.")
+
+    _render_ai_summary(job, result)
+
+
+def _render_ai_summary(job: dict, base) -> None:
+    """Optional AI reading — overview, pros/cons, growth, subtler red flags."""
+    provider = llm.get_provider(db_handler)
+    if not provider.is_available():
+        st.caption("AI mode is off. Set a provider in `.env` for a plain-English "
+                   "read with pros, cons, and subtler red flags.")
+        return
+
+    st.divider()
+    key = f"ai_summary_{job['job_key']}"
+    if st.button("Summarise with AI", key=f"btn_{key}"):
+        with st.spinner("Reading the advert…"):
+            st.session_state[key] = ai_summary.enrich(
+                job, base, provider, effort=config.AI_EFFORT)
+
+    result = st.session_state.get(key)
+    if result is None:
+        return
+    if not result.ai_used:
+        st.warning("The AI summary was unavailable, so only the sections above "
+                   "are shown."
+                   + (f"\n\nReason: {result.note}" if result.note else ""))
+        return
+
+    st.markdown(f"**AI summary** · {result.model}"
+                + (" · cached" if result.from_cache else ""))
+    st.markdown(result.overview)
+    if result.pros:
+        st.markdown("**Pros** — " + "; ".join(result.pros))
+    if result.cons:
+        st.markdown("**Cons** — " + "; ".join(result.cons))
+    if result.growth:
+        st.markdown(f"**Growth** — {result.growth}")
+    for flag in result.red_flags:
+        st.warning(f"⚠ {flag}")
 
 
 def _render_score_explanation(job: dict, resume_skills: list[str],
@@ -763,9 +834,12 @@ def _render_job_detail(frame: pd.DataFrame) -> None:
         _render_score_explanation(job, [])
         return
 
-    score_tab, tailor_tab, letter_tab, interview_tab, compare_tab = st.tabs(
-        ["Why this score", "Tailor resume", "Cover letter", "Interview prep",
-         "Compare resumes"])
+    (summary_tab, score_tab, tailor_tab, letter_tab, interview_tab,
+     compare_tab) = st.tabs(
+        ["Summary", "Why this score", "Tailor resume", "Cover letter",
+         "Interview prep", "Compare resumes"])
+    with summary_tab:
+        _render_summary(job)
     with score_tab:
         _render_score_explanation(job, resume_skills, resume.full_text())
     with tailor_tab:
