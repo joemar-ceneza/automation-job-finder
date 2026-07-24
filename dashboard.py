@@ -32,8 +32,11 @@ import optimizer
 import resume_model
 import resume_parser
 import resumes
+import skill_extractor
+import skill_proposals
 import stages
 import summary
+import tracked_skills
 
 _TABLE_COLUMNS = ["status", "score_percent", "title", "company", "location",
                   "source", "work_arrangement", "salary", "listing_date",
@@ -308,6 +311,47 @@ def _render_analytics() -> None:
                              if total >= config.CALIBRATION_MIN_JOBS
                              and row["demand"] / total >= 0.01 else "")
                     st.caption(f"`{row['demand']:>3}` {row['skill']}{share}")
+
+    _render_skill_proposals()
+
+
+def _apply_skill_proposal(canonical: str, category: str,
+                          aliases: list[str]) -> None:
+    """Approve a skill and rebuild job_skills so its demand shows immediately."""
+    tracked_skills.add(canonical, category, tuple(aliases))
+    jobs = db_handler.fetch_all_jobs()
+    db_handler.replace_job_skills(
+        skill_extractor.extract_for_rows(jobs, tracked_skills.additions()))
+
+
+def _render_skill_proposals() -> None:
+    """Feature 16 — suggest in-demand skills the dictionary doesn't track yet."""
+    proposals = skill_proposals.propose(
+        db_handler.fetch_all_jobs(), min_occurrences=3,
+        extra_tracked=tracked_skills.additions())
+    st.divider()
+    st.subheader("Suggested skills to track")
+    if not proposals:
+        st.caption("Your dictionary already covers what your corpus asks for — "
+                   "nothing to suggest.")
+        return
+    st.caption("Skills your ads ask for that you don't track yet. Add the ones "
+               "worth counting — it re-extracts your corpus so their demand "
+               "shows above.")
+    for proposal in proposals[:20]:
+        columns = st.columns([4, 1])
+        with columns[0]:
+            st.markdown(f"**{proposal.canonical}** · {proposal.category}")
+            st.caption(f"{proposal.rationale} Seen as: "
+                       + ", ".join(proposal.merge_from))
+        if columns[1].button(f"Track ({proposal.occurrences})",
+                             key=f"addskill_{proposal.canonical}",
+                             width="stretch"):
+            with st.spinner(f"Adding {proposal.canonical} and re-extracting…"):
+                _apply_skill_proposal(proposal.canonical, proposal.category,
+                                      proposal.merge_from)
+            st.success(f"Now tracking {proposal.canonical}.")
+            st.rerun()
 
 
 # ======================================================

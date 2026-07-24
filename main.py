@@ -42,8 +42,10 @@ import scraper_common
 import scraper_jobstreet
 import scraper_onlinejobs
 import skill_extractor
+import skill_proposals
 import stages
 import summary
+import tracked_skills
 
 # Site name -> scraper module. Each module exposes run_scraper().
 SITE_SCRAPERS = {
@@ -144,6 +146,12 @@ def _parse_args() -> argparse.Namespace:
                              "--summary (falls back to Standard if unavailable)")
     parser.add_argument("--ai-usage", action="store_true",
                         help="Show total AI token usage, then exit")
+    parser.add_argument("--propose-skills", action="store_true",
+                        help="Suggest in-demand skills your corpus asks for but "
+                             "you don't track yet, then exit")
+    parser.add_argument("--min-occurrences", type=int, default=3,
+                        help="Minimum jobs a skill must appear in to be "
+                             "proposed by --propose-skills (default 3)")
     parser.add_argument("--compare", metavar="JOB",
                         help="Rank every resume against a job, then exit")
     parser.add_argument("--resume", metavar="NAME", default=None,
@@ -186,7 +194,8 @@ def _parse_args() -> argparse.Namespace:
                         or args.import_resume or args.tailor
                         or args.cover_letter or args.compare or args.explain
                         or args.interview or args.summary or args.rewrite
-                        or args.ai_usage or args.list_resumes
+                        or args.ai_usage or args.propose_skills
+                        or args.list_resumes
                         or args.set_default_resume
                         or (args.prune_days is not None and not args.keyword))
     if not maintenance_only and (not args.resume_pdf or not args.keyword):
@@ -482,6 +491,35 @@ def _run_summary(args: argparse.Namespace) -> None:
         logging.info("  Extra red flags: %s", "; ".join(enriched.red_flags))
 
 
+def _run_propose_skills(args: argparse.Namespace) -> None:
+    """Suggests in-demand skills the corpus asks for but the dictionary misses."""
+    db_handler.init_db()
+    jobs = db_handler.fetch_all_jobs()
+    if not jobs:
+        logging.warning("No jobs stored yet — nothing to analyse.")
+        return
+    proposals = skill_proposals.propose(
+        jobs, min_occurrences=args.min_occurrences,
+        extra_tracked=tracked_skills.additions())
+    if not proposals:
+        logging.info("Nothing to propose — your dictionary already covers what "
+                     "your corpus asks for (at %d+ jobs).",
+                     args.min_occurrences)
+        return
+
+    logging.info("=" * 70)
+    logging.info("Skills your corpus asks for that you don't track (%d+ jobs):",
+                 args.min_occurrences)
+    logging.info("=" * 70)
+    for proposal in proposals:
+        logging.info("  %3d jobs · %-22s [%s]  seen as: %s",
+                     proposal.occurrences, proposal.canonical,
+                     proposal.category, ", ".join(proposal.merge_from))
+    logging.info("=" * 70)
+    logging.info("Approve the ones worth tracking in the dashboard's Skill "
+                 "demand tab — it re-extracts your corpus in the same action.")
+
+
 def _run_ai_usage() -> None:
     """Reports total AI token spend."""
     db_handler.init_db()
@@ -714,6 +752,9 @@ def main() -> None:
     if args.ai_usage:
         _run_ai_usage()
         return
+    if args.propose_skills:
+        _run_propose_skills(args)
+        return
     if args.compare:
         _run_compare(args)
         return
@@ -770,6 +811,10 @@ def main() -> None:
     if args.prune_days is not None:
         db_handler.prune_stale(args.prune_days)
 
+    # Skills you've approved beyond the built-in dictionary — extracted from
+    # every job alongside the built-ins, so their demand keeps showing.
+    extra_skills = tracked_skills.additions()
+
     current_hash = _skills_hash(resume_skills)
     stored_hash = db_handler.get_meta("skills_hash")
     stored_scale = db_handler.get_meta("score_scale")
@@ -778,7 +823,8 @@ def main() -> None:
         stored = db_handler.fetch_all_jobs()
         rescored = matcher.rank_jobs(stored, resume_skills)
         db_handler.update_scores(rescored)
-        db_handler.replace_job_skills(skill_extractor.extract_for_rows(stored))
+        db_handler.replace_job_skills(
+            skill_extractor.extract_for_rows(stored, extra_skills))
         db_handler.set_meta("score_scale", current_scale)
     elif stored_scale and stored_scale != current_scale:
         logging.warning("Stored scores use scale v%s but this build scores on "
@@ -810,7 +856,8 @@ def main() -> None:
         row["description"] = descriptions.get(row["job_key"], "")
     db_handler.insert_jobs(new_rows)
     db_handler.mark_seen(list(seen_keys))
-    db_handler.replace_job_skills(skill_extractor.extract_for_rows(new_rows))
+    db_handler.replace_job_skills(
+        skill_extractor.extract_for_rows(new_rows, extra_skills))
 
     # A job seen before may now carry a full description (--full-desc), and
     # its stored score was computed from the teaser alone. Re-score only those.
@@ -820,7 +867,7 @@ def main() -> None:
         refreshed = db_handler.fetch_jobs(enriched)
         db_handler.update_scores(matcher.rank_jobs(refreshed, resume_skills))
         db_handler.replace_job_skills(
-            skill_extractor.extract_for_rows(refreshed))
+            skill_extractor.extract_for_rows(refreshed, extra_skills))
         logging.info("Re-scored %d job(s) against their fuller description.",
                      len(enriched))
 

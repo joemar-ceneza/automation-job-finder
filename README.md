@@ -77,6 +77,14 @@ Archive listings that have vanished from search results for 30+ days:
 python main.py --prune-days 30
 ```
 
+See which in-demand skills your ads ask for but you don't track yet:
+```
+python main.py --propose-skills            # report; --min-occurrences N to tune
+```
+Approve the ones worth counting in the dashboard's **Skill demand** tab — it
+re-extracts your corpus in the same action, so their demand starts showing.
+Approvals are stored in the database (never in code) and are reversible.
+
 ## Applying to a job (tailor, cover letters, AI mode)
 
 Once a job is in the database, these commands help you apply to it. `JOB` is a
@@ -283,6 +291,10 @@ automation-job-finder/
 ├── ai_interview.py        # AI interview answers (--interview --ai), same verifier
 ├── ai_summary.py          # AI job read (--summary --ai): pros/cons, growth, red flags
 ├── ai_explain.py          # AI score narrative grounded in the deterministic facts
+├── skill_extractor.py     # Canonical skill matching into job_skills (+ approved extras)
+├── skill_lexicon.py       # Curated candidate skills for --propose-skills
+├── skill_proposals.py     # Feature 16: propose in-demand skills you don't track yet
+├── tracked_skills.py      # Approved skill additions (per-database, reversible)
 ├── skills.txt             # Your customizable skill/keyword list
 ├── .env.example           # Template for Gmail credentials (copy to .env)
 ├── logs/                  # automation.log, debug HTML, error screenshots

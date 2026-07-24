@@ -1,0 +1,175 @@
+"""
+skill_lexicon.py
+A curated candidate lexicon of common technical skills, used by the skill-merge
+proposal engine to notice skills your corpus asks for that your extraction
+dictionary (config.MASTER_SKILLS) does not yet track.
+
+This is deliberately a hand-maintained list rather than a model's guess: a
+count of "Kubernetes" should be a count of Kubernetes, so the proposal engine
+only ever suggests a name a human put here. Each entry is
+(canonical, category, variants) — the variants are the surface forms an
+advertisement might use, matched with the same word-boundary rules the
+extractor uses. Categories match skill_extractor's buckets
+(language | framework | database | cloud | ai | tool).
+
+Overlap with MASTER_SKILLS is fine and expected: the proposal engine filters
+out anything already tracked, so an entry here that you already track simply
+never becomes a proposal. Add freely — a skill only ever surfaces if it is
+both in this list AND actually in your corpus AND not yet tracked.
+"""
+
+# (canonical, category, (variant, ...))
+LEXICON: list[tuple[str, str, tuple[str, ...]]] = [
+    # --- languages ------------------------------------------------------
+    ("Scala", "language", ("Scala",)),
+    ("Perl", "language", ("Perl",)),
+    ("Objective-C", "language", ("Objective-C", "Objective C")),
+    ("Elixir", "language", ("Elixir",)),
+    ("Haskell", "language", ("Haskell",)),
+    ("Groovy", "language", ("Groovy",)),
+    ("Lua", "language", ("Lua",)),
+    ("MATLAB", "language", ("MATLAB",)),
+    ("VBA", "language", ("VBA", "Visual Basic")),
+    ("Solidity", "language", ("Solidity",)),
+
+    # --- frameworks / frontend / backend --------------------------------
+    ("Remix", "framework", ("Remix",)),
+    ("Astro", "framework", ("Astro",)),
+    ("Ember.js", "framework", ("Ember", "EmberJS", "Ember.js")),
+    ("Backbone.js", "framework", ("Backbone", "Backbone.js")),
+    ("Alpine.js", "framework", ("Alpine.js", "AlpineJS")),
+    ("Symfony", "framework", ("Symfony",)),
+    ("Phoenix", "framework", ("Phoenix Framework",)),
+    ("Gatsby", "framework", ("Gatsby",)),
+    ("Material UI", "framework", ("Material UI", "MUI", "Material-UI")),
+    ("Chakra UI", "framework", ("Chakra UI", "Chakra")),
+    ("Zustand", "framework", ("Zustand",)),
+    ("React Native", "framework", ("React Native",)),
+    ("Flutter", "framework", ("Flutter",)),
+    ("Ionic", "framework", ("Ionic",)),
+    ("Xamarin", "framework", ("Xamarin",)),
+    ("Electron", "framework", ("Electron",)),
+    ("Spring", "framework", ("Spring Framework",)),
+    (".NET Core", "framework", (".NET Core", "ASP.NET Core", "dotnet")),
+    ("Blazor", "framework", ("Blazor",)),
+    ("gRPC", "framework", ("gRPC",)),
+    ("WordPress", "framework", ("WordPress", "WP")),
+    ("Shopify", "framework", ("Shopify",)),
+    ("Webflow", "framework", ("Webflow",)),
+    ("Wix", "framework", ("Wix",)),
+    ("Drupal", "framework", ("Drupal",)),
+    ("Magento", "framework", ("Magento",)),
+    ("WooCommerce", "framework", ("WooCommerce",)),
+
+    # --- databases / data stores ----------------------------------------
+    ("Cassandra", "database", ("Cassandra",)),
+    ("Neo4j", "database", ("Neo4j",)),
+    ("CouchDB", "database", ("CouchDB",)),
+    ("InfluxDB", "database", ("InfluxDB",)),
+    ("Snowflake", "database", ("Snowflake",)),
+    ("BigQuery", "database", ("BigQuery",)),
+    ("Redshift", "database", ("Redshift",)),
+    ("Databricks", "database", ("Databricks",)),
+    ("Cosmos DB", "database", ("Cosmos DB", "CosmosDB")),
+
+    # --- cloud / devops / infra -----------------------------------------
+    ("GitLab CI", "cloud", ("GitLab CI", "GitLab CI/CD")),
+    ("CircleCI", "cloud", ("CircleCI",)),
+    ("Travis CI", "cloud", ("Travis CI", "TravisCI")),
+    ("Ansible", "cloud", ("Ansible",)),
+    ("Puppet", "cloud", ("Puppet",)),
+    ("Chef", "cloud", ("Chef",)),
+    ("Helm", "cloud", ("Helm",)),
+    ("Prometheus", "cloud", ("Prometheus",)),
+    ("Grafana", "cloud", ("Grafana",)),
+    ("Datadog", "cloud", ("Datadog",)),
+    ("Sentry", "cloud", ("Sentry",)),
+    ("New Relic", "cloud", ("New Relic",)),
+    ("Cloudflare", "cloud", ("Cloudflare",)),
+    ("Kafka", "cloud", ("Apache Kafka", "Kafka")),
+    ("RabbitMQ", "cloud", ("RabbitMQ",)),
+    ("Celery", "cloud", ("Celery",)),
+    ("Serverless", "cloud", ("Serverless", "AWS Lambda", "Lambda")),
+    ("Fastify", "cloud", ("Fastify",)),
+    ("Railway", "cloud", ("Railway",)),
+    ("Render", "cloud", ("Render.com",)),
+    ("Fly.io", "cloud", ("Fly.io",)),
+
+    # --- data / AI / ML -------------------------------------------------
+    ("Apache Spark", "ai", ("Apache Spark", "Spark", "PySpark")),
+    ("Hadoop", "ai", ("Hadoop",)),
+    ("Airflow", "ai", ("Apache Airflow", "Airflow")),
+    ("dbt", "ai", ("dbt",)),
+    ("Scikit-learn", "ai", ("scikit-learn", "sklearn", "Scikit learn")),
+    ("Keras", "ai", ("Keras",)),
+    ("Hugging Face", "ai", ("Hugging Face", "HuggingFace")),
+    ("spaCy", "ai", ("spaCy",)),
+    ("OpenCV", "ai", ("OpenCV",)),
+    ("NLP", "ai", ("Natural Language Processing", "NLP")),
+    ("Computer Vision", "ai", ("Computer Vision",)),
+    ("Power BI", "ai", ("Power BI", "PowerBI")),
+    ("Tableau", "ai", ("Tableau",)),
+    ("Looker", "ai", ("Looker",)),
+    ("Matplotlib", "ai", ("Matplotlib",)),
+    ("Jupyter", "ai", ("Jupyter", "Jupyter Notebook")),
+    ("LLM", "ai", ("Large Language Model", "LLMs")),
+    ("Prompt Engineering", "ai", ("Prompt Engineering",)),
+
+    # --- tools / practices / everything else ----------------------------
+    ("Git", "tool", ("Git",)),
+    ("GitHub", "tool", ("GitHub",)),
+    ("GitLab", "tool", ("GitLab",)),
+    ("Bitbucket", "tool", ("Bitbucket",)),
+    ("Jira", "tool", ("Jira",)),
+    ("Confluence", "tool", ("Confluence",)),
+    ("Trello", "tool", ("Trello",)),
+    ("Asana", "tool", ("Asana",)),
+    ("Notion", "tool", ("Notion",)),
+    ("Slack", "tool", ("Slack",)),
+    ("Agile", "tool", ("Agile",)),
+    ("Scrum", "tool", ("Scrum",)),
+    ("Kanban", "tool", ("Kanban",)),
+    ("Postman", "tool", ("Postman",)),
+    ("Swagger", "tool", ("Swagger", "OpenAPI")),
+    ("Selenium", "tool", ("Selenium",)),
+    ("Cypress", "tool", ("Cypress",)),
+    ("Jest", "tool", ("Jest",)),
+    ("Mocha", "tool", ("Mocha",)),
+    ("Pytest", "tool", ("Pytest", "py.test")),
+    ("JUnit", "tool", ("JUnit",)),
+    ("PHPUnit", "tool", ("PHPUnit",)),
+    ("Storybook", "tool", ("Storybook",)),
+    ("ESLint", "tool", ("ESLint",)),
+    ("Prettier", "tool", ("Prettier",)),
+    ("npm", "tool", ("npm",)),
+    ("Yarn", "tool", ("Yarn",)),
+    ("pnpm", "tool", ("pnpm",)),
+    ("Vim", "tool", ("Vim",)),
+    ("VS Code", "tool", ("VS Code", "Visual Studio Code")),
+    ("Zapier", "tool", ("Zapier",)),
+    ("Make.com", "tool", ("Make.com", "Integromat")),
+    ("n8n", "tool", ("n8n",)),
+    ("Google Apps Script", "tool", ("Google Apps Script", "Apps Script")),
+    ("Excel", "tool", ("Microsoft Excel", "MS Excel")),
+    ("Google Sheets", "tool", ("Google Sheets",)),
+    ("Canva", "tool", ("Canva",)),
+    ("Photoshop", "tool", ("Photoshop", "Adobe Photoshop")),
+    ("Illustrator", "tool", ("Adobe Illustrator", "Illustrator")),
+    ("Adobe XD", "tool", ("Adobe XD",)),
+    ("Sketch", "tool", ("Sketch",)),
+    ("SEO", "tool", ("SEO", "Search Engine Optimization")),
+    ("Google Analytics", "tool", ("Google Analytics", "GA4")),
+    ("Stripe", "tool", ("Stripe",)),
+    ("Twilio", "tool", ("Twilio",)),
+    ("Salesforce", "tool", ("Salesforce",)),
+    ("HubSpot", "tool", ("HubSpot",)),
+    ("SAP", "tool", ("SAP",)),
+    ("Airtable", "tool", ("Airtable",)),
+    ("Contentful", "tool", ("Contentful",)),
+    ("Sanity", "tool", ("Sanity.io", "Sanity CMS")),
+    ("Unity", "tool", ("Unity",)),
+    ("Unreal Engine", "tool", ("Unreal Engine", "Unreal")),
+    ("Blender", "tool", ("Blender",)),
+    ("Kubernetes", "cloud", ("Kubernetes", "K8s")),
+    ("Terraform", "cloud", ("Terraform",)),
+]

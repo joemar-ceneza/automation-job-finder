@@ -91,10 +91,28 @@ def category_for(skill: str) -> str:
     return _CATEGORY_BY_SKILL.get(skill, _DEFAULT_CATEGORY)
 
 
-def extract_skills(title: str, body: str) -> list[tuple[str, str, bool]]:
+def _term_in_text(term: str, text_lower: str) -> bool:
+    """Word-boundary match of a single term, mirroring skill_in_text's rule."""
+    pattern = r"(?<!\w)" + re.escape(term.lower()) + r"(?!\w)"
+    return bool(re.search(pattern, text_lower))
+
+
+def _extra_in_text(aliases: tuple[str, ...], canonical: str,
+                   text_lower: str) -> bool:
+    """An approved extra skill matches on its canonical name or any alias."""
+    return any(_term_in_text(term, text_lower)
+               for term in (canonical, *aliases))
+
+
+def extract_skills(title: str, body: str,
+                   extra_skills: list[tuple[str, str, tuple[str, ...]]] | None
+                   = None) -> list[tuple[str, str, bool]]:
     """
-    Finds every MASTER_SKILLS entry present in a job advertisement.
-    Returns (skill, category, found_in_title) tuples.
+    Finds every MASTER_SKILLS entry — plus any approved extra skills — present
+    in a job advertisement. Returns (skill, category, found_in_title) tuples.
+
+    extra_skills are (canonical, category, aliases), the shape tracked_skills
+    provides, so an approved skill is tracked exactly like a built-in one.
     """
     title_lower = (title or "").lower()
     body_lower = (body or "").lower()
@@ -106,10 +124,18 @@ def extract_skills(title: str, body: str) -> list[tuple[str, str, bool]]:
         if not _is_credible(skill, title or "", body or ""):
             continue
         found.append((skill, category_for(skill), in_title))
+
+    for canonical, category, aliases in (extra_skills or []):
+        in_title = _extra_in_text(aliases, canonical, title_lower)
+        if not in_title and not _extra_in_text(aliases, canonical, body_lower):
+            continue
+        found.append((canonical, category or _DEFAULT_CATEGORY, in_title))
     return found
 
 
-def extract_for_rows(rows: list[dict]) -> list[tuple[str, str, str, int]]:
+def extract_for_rows(rows: list[dict],
+                     extra_skills: list[tuple[str, str, tuple[str, ...]]] | None
+                     = None) -> list[tuple[str, str, str, int]]:
     """
     Builds job_skills rows for a batch of scored jobs.
     Returns (job_key, skill, category, in_title) tuples ready for insertion.
@@ -118,8 +144,8 @@ def extract_for_rows(rows: list[dict]) -> list[tuple[str, str, str, int]]:
     for row in rows:
         text = " ".join(part for part in (row.get("teaser", ""),
                                           row.get("description", "")) if part)
-        for skill, category, in_title in extract_skills(row.get("title", ""),
-                                                        text):
+        for skill, category, in_title in extract_skills(
+                row.get("title", ""), text, extra_skills):
             extracted.append((row["job_key"], skill, category, int(in_title)))
     logging.info("Extracted %d skill mentions from %d jobs.",
                  len(extracted), len(rows))
