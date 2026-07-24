@@ -22,6 +22,7 @@ import cover_letter
 import db_handler
 import documents
 import explain
+import interview
 import llm
 import optimizer
 import resume_model
@@ -567,6 +568,43 @@ def _render_cover_letter(job: dict, resume) -> None:
     _offer_downloads("letter_files", job["job_key"])
 
 
+def _render_interview(job: dict, resume, resume_skills: list[str]) -> None:
+    """Likely interview questions and talking points — deterministic, no AI."""
+    explanation = explain.explain_job(job, resume_skills, resume.full_text())
+    prep = interview.prepare(resume, job, explanation)
+
+    if prep.strengths:
+        st.markdown("**Lead with these** — the advert asks for them and your "
+                    "resume shows them:")
+        for point in prep.strengths:
+            st.markdown(f"- **{point.skill}**"
+                        + (f" — {point.bullet}" if point.bullet
+                           else " — _have a concrete example ready_"))
+    else:
+        st.info("This advert names none of your skills. Prepare to show "
+                "transferable experience and genuine interest in the role.")
+
+    if prep.gaps:
+        st.warning("Expect to be pressed on what you don't list: "
+                   + ", ".join(prep.gaps) + ".")
+
+    st.divider()
+    labels = {"Experience": "Your experience", "Gap": "Filling the gaps",
+              "Behavioural": "Behavioural"}
+    for category, heading in labels.items():
+        group = [q for q in prep.questions if q.category == category]
+        if not group:
+            continue
+        st.markdown(f"**{heading}**")
+        for question in group:
+            st.markdown(f"- {question.prompt}")
+            if question.hint:
+                st.caption(f"→ {question.hint}")
+
+    st.caption("These are talking points from your own resume — rehearse them "
+               "in your words, don't read them.")
+
+
 def _render_comparison(job: dict) -> None:
     """Ranks every resume against this job — arithmetic, no AI."""
     references = resumes.available()
@@ -679,14 +717,17 @@ def _render_job_detail(frame: pd.DataFrame) -> None:
         _render_score_explanation(job, [])
         return
 
-    score_tab, tailor_tab, letter_tab, compare_tab = st.tabs(
-        ["Why this score", "Tailor resume", "Cover letter", "Compare resumes"])
+    score_tab, tailor_tab, letter_tab, interview_tab, compare_tab = st.tabs(
+        ["Why this score", "Tailor resume", "Cover letter", "Interview prep",
+         "Compare resumes"])
     with score_tab:
         _render_score_explanation(job, resume_skills, resume.full_text())
     with tailor_tab:
         _render_tailor(job, resume)
     with letter_tab:
         _render_cover_letter(job, resume)
+    with interview_tab:
+        _render_interview(job, resume, resume_skills)
     with compare_tab:
         _render_comparison(job)
 

@@ -27,6 +27,8 @@ import db_handler
 import dedupe
 import documents
 import email_handler
+import explain
+import interview
 import llm
 import matcher
 import optimizer
@@ -127,6 +129,9 @@ def _parse_args() -> argparse.Namespace:
                              "then export it (needs an AI provider), then exit")
     parser.add_argument("--explain", metavar="JOB",
                         help="Explain why a job scored what it did, then exit")
+    parser.add_argument("--interview", metavar="JOB",
+                        help="Prepare for a job's interview — likely questions "
+                             "and talking points from your resume, then exit")
     parser.add_argument("--ai", action="store_true",
                         help="Use the configured AI provider to enrich "
                              "--explain or --cover-letter (falls back to "
@@ -174,7 +179,8 @@ def _parse_args() -> argparse.Namespace:
                         or args.backup or args.calibrate or args.stalled
                         or args.import_resume or args.tailor
                         or args.cover_letter or args.compare or args.explain
-                        or args.rewrite or args.ai_usage or args.list_resumes
+                        or args.interview or args.rewrite or args.ai_usage
+                        or args.list_resumes
                         or args.set_default_resume
                         or (args.prune_days is not None and not args.keyword))
     if not maintenance_only and (not args.resume_pdf or not args.keyword):
@@ -387,6 +393,27 @@ def _run_explain(args: argparse.Namespace) -> None:
         logging.info("  Do next: %s", "; ".join(result.improvements))
     if result.advice:
         logging.info("  %s", result.advice)
+
+
+def _run_interview(args: argparse.Namespace) -> None:
+    """Prints an interview prep sheet for one job."""
+    job, resume = _load_job_and_resume(args.interview, args.resume)
+    if job is None:
+        return
+    resume_skills = resume_parser.find_matching_skills(
+        resume.full_text(), resume_parser.load_skills(args.skills))
+    explanation = explain.explain_job(job, resume_skills, resume.full_text())
+    prep = interview.prepare(resume, job, explanation)
+
+    logging.info("=" * 70)
+    logging.info("Interview prep — %s @ %s", prep.position,
+                 prep.company or "unknown")
+    logging.info("=" * 70)
+    for line in prep.lines:
+        logging.info("  %s", line)
+    logging.info("=" * 70)
+    logging.info("These are talking points from your own resume — rehearse "
+                 "them in your words, don't read them.")
 
 
 def _run_ai_usage() -> None:
@@ -611,6 +638,9 @@ def main() -> None:
         return
     if args.explain:
         _run_explain(args)
+        return
+    if args.interview:
+        _run_interview(args)
         return
     if args.ai_usage:
         _run_ai_usage()

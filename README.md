@@ -87,6 +87,7 @@ live in the dashboard's **Job detail** tab.
 python main.py --tailor JOB          # restructure your resume for the job (deterministic)
 python main.py --cover-letter JOB    # draft a cover letter from a template
 python main.py --explain JOB         # why the job scored what it did
+python main.py --interview JOB       # likely interview questions + talking points from your resume
 python main.py --compare JOB         # rank every resume in resumes/ against the job
 ```
 
@@ -260,6 +261,7 @@ automation-job-finder/
 ├── resumes.py             # Registry of resume variants in resumes/
 ├── optimizer.py           # Deterministic resume tailoring + ATS scoring (--tailor)
 ├── explain.py             # Deterministic score explanation (--explain)
+├── interview.py           # Deterministic interview prep sheet (--interview)
 ├── cover_letter.py        # Template cover letters (--cover-letter)
 ├── documents.py           # Export resumes/letters to DOCX / PDF / Markdown
 ├── llm.py                 # AI transport layer: provider protocol, cache, factory
