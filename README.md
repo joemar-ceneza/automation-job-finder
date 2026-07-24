@@ -77,6 +77,36 @@ Archive listings that have vanished from search results for 30+ days:
 python main.py --prune-days 30
 ```
 
+## Applying to a job (tailor, cover letters, AI mode)
+
+Once a job is in the database, these commands help you apply to it. `JOB` is a
+`job_key` (e.g. `jobstreet:id:12345678`) or the listing URL. All of them also
+live in the dashboard's **Job detail** tab.
+
+```
+python main.py --tailor JOB          # restructure your resume for the job (deterministic)
+python main.py --cover-letter JOB    # draft a cover letter from a template
+python main.py --explain JOB         # why the job scored what it did
+python main.py --compare JOB         # rank every resume in resumes/ against the job
+```
+
+**AI mode** is optional and off by default. Configure a provider in `.env`
+(see `.env.example` — Anthropic, or a local model via Ollama / LM Studio), then
+add `--ai` to write real prose instead of filling a template:
+
+```
+python main.py --cover-letter JOB --ai   # AI writes the letter body from your resume
+python main.py --rewrite JOB             # tailor AND AI-rewrite the wording (needs a provider)
+python main.py --explain JOB --ai        # AI narrative on top of the deterministic score
+```
+
+Everything AI writes is checked against your resume in code, not just asked of
+the prompt: any cover-letter paragraph or rewritten bullet that introduces a
+number or a skill your resume does not already contain is rejected, and your
+Standard-mode version is used instead. Without a provider, every `--ai` command
+falls back cleanly to its deterministic equivalent. Read anything AI-written
+before sending — the wording is the model's, the facts are yours.
+
 The pipeline:
 1. Extracts text from your resume PDF and matches it against `skills.txt`
 2. Searches each selected site for each keyword (comma-separated),
@@ -226,6 +256,17 @@ automation-job-finder/
 ├── matcher.py             # Weighted scoring, salary/years extraction, CSV + HTML export
 ├── db_handler.py          # SQLite persistence, status tracking, prune/rescore
 ├── email_handler.py       # Gmail SMTP digest of new matches
+├── resume_model.py        # Structured master-resume model (parse/serialise Markdown)
+├── resumes.py             # Registry of resume variants in resumes/
+├── optimizer.py           # Deterministic resume tailoring + ATS scoring (--tailor)
+├── explain.py             # Deterministic score explanation (--explain)
+├── cover_letter.py        # Template cover letters (--cover-letter)
+├── documents.py           # Export resumes/letters to DOCX / PDF / Markdown
+├── llm.py                 # AI transport layer: provider protocol, cache, factory
+├── llm_providers.py       # Claude + OpenAI-compatible provider adapters
+├── ai_rewrite.py          # AI bullet rewriting + code-enforced fabrication verifier
+├── ai_cover_letter.py     # AI cover letters (--cover-letter --ai), same verifier
+├── ai_explain.py          # AI score narrative grounded in the deterministic facts
 ├── skills.txt             # Your customizable skill/keyword list
 ├── .env.example           # Template for Gmail credentials (copy to .env)
 ├── logs/                  # automation.log, debug HTML, error screenshots

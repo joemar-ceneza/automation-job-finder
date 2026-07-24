@@ -44,6 +44,11 @@ class CoverLetter:
     tone: str = "direct"
     letter_date: str = ""
     skills_used: list[str] = field(default_factory=list)
+    # Set by ai_cover_letter when the body is model-written rather than
+    # templated; left at the defaults for a Standard-mode letter.
+    model: str = ""
+    from_cache: bool = False
+    ai_used: bool = False
 
     def salutation(self) -> str:
         return f"Dear {self.recipient},"

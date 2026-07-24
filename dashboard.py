@@ -14,6 +14,7 @@ import os
 import pandas as pd
 import streamlit as st
 
+import ai_cover_letter
 import ai_explain
 import ai_rewrite
 import config
@@ -520,11 +521,37 @@ def _render_cover_letter(job: dict, resume) -> None:
     recipient = controls[1].text_input(
         "Addressed to", value=config.COVER_LETTER_RECIPIENT)
 
-    letter = cover_letter.compose(resume, job, tone=tone, recipient=recipient)
+    provider = llm.get_provider(db_handler)
+    use_ai = False
+    if provider.is_available():
+        use_ai = st.checkbox(
+            "Write the body with AI", value=False,
+            help="The model writes the letter from your real accomplishments. "
+                 "Any paragraph that invents a number or skill not in your "
+                 "resume is rejected and the template letter used instead.")
+
+    if use_ai:
+        with st.spinner("Writing and fact-checking the letter…"):
+            letter = ai_cover_letter.compose(
+                resume, job, provider, tone=tone, recipient=recipient,
+                effort=config.AI_EFFORT)
+    else:
+        letter = cover_letter.compose(resume, job, tone=tone,
+                                      recipient=recipient)
+
     st.text_area("Draft", letter.to_text(), height=340,
                  label_visibility="collapsed")
-    st.caption("Read it before sending — a template letter reads like one, "
-               "and the opening line is usually worth rewriting yourself.")
+    if letter.ai_used:
+        st.caption(f"Body written by AI ({letter.model}"
+                   + (" · cached" if letter.from_cache else "")
+                   + ") and checked against your resume. Read it before "
+                   "sending — the wording is the model's, the facts are yours.")
+    else:
+        if use_ai:
+            st.warning("The AI letter couldn't be used — showing the template "
+                       "letter instead.")
+        st.caption("Read it before sending — a template letter reads like one, "
+                   "and the opening line is usually worth rewriting yourself.")
 
     if st.button("Save cover letter", key="letter_go", type="primary",
                  width="stretch"):

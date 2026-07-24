@@ -18,6 +18,7 @@ from dataclasses import asdict
 from datetime import date, datetime
 from logging.handlers import RotatingFileHandler
 
+import ai_cover_letter
 import ai_explain
 import ai_rewrite
 import config
@@ -128,7 +129,8 @@ def _parse_args() -> argparse.Namespace:
                         help="Explain why a job scored what it did, then exit")
     parser.add_argument("--ai", action="store_true",
                         help="Use the configured AI provider to enrich "
-                             "--explain (falls back to Standard if unavailable)")
+                             "--explain or --cover-letter (falls back to "
+                             "Standard if unavailable)")
     parser.add_argument("--ai-usage", action="store_true",
                         help="Show total AI token usage, then exit")
     parser.add_argument("--compare", metavar="JOB",
@@ -470,14 +472,32 @@ def _run_cover_letter(args: argparse.Namespace) -> None:
                       ", ".join(cover_letter.available_tones()))
         return
 
-    letter = cover_letter.compose(resume, job, tone=args.tone,
-                                  recipient=args.recipient)
+    if args.ai:
+        provider = llm.get_provider(db_handler)
+        letter = ai_cover_letter.compose(resume, job, provider, tone=args.tone,
+                                         recipient=args.recipient,
+                                         effort=config.AI_EFFORT)
+    else:
+        letter = cover_letter.compose(resume, job, tone=args.tone,
+                                      recipient=args.recipient)
+
     logging.info("=" * 70)
     for line in letter.to_text().splitlines():
         logging.info("  %s", line)
     logging.info("=" * 70)
-    logging.info("Read it before sending — a template letter reads like one, "
-                 "and the opening line is usually worth rewriting yourself.")
+    if letter.ai_used:
+        logging.info("Body written by AI (%s%s) and checked against your "
+                     "resume — read it before sending; the wording is the "
+                     "model's, the facts are yours.", letter.model,
+                     ", cached" if letter.from_cache else "")
+    else:
+        if args.ai:
+            logging.info("AI unavailable — used the template letter. Configure "
+                         "a provider in .env to enable AI mode (see "
+                         ".env.example).")
+        logging.info("Read it before sending — a template letter reads like "
+                     "one, and the opening line is usually worth rewriting "
+                     "yourself.")
 
     stem = documents.slugify(
         f"cover-letter-{job['title']}-{job.get('company') or ''}")

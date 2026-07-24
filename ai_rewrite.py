@@ -82,22 +82,29 @@ def _skills_in(text: str) -> set[str]:
             in skill_extractor.extract_skills("", text or "")}
 
 
-def verify_no_fabrication(rewrite: str, resume_text: str) -> str | None:
+def verify_no_fabrication(text: str, resume_text: str,
+                          allowed_number_context: str = "") -> str | None:
     """
-    Returns a reason string when the rewrite claims something the resume does
-    not support, or None when it is clean.
+    Returns a reason string when the text claims something the resume does not
+    support, or None when it is clean.
 
-    Two things are checked, because they are the two ways a rewrite invents
-    experience: a number that appears nowhere in the resume (a made-up metric),
-    and a known technology the resume never mentions (a claimed skill).
+    Two things are checked, because they are the two ways generated text
+    invents experience: a number that appears nowhere in the resume (a made-up
+    metric), and a known technology the resume never mentions (a claimed
+    skill).
+
+    allowed_number_context whitelists extra numbers that are legitimate but not
+    from the resume — a cover letter naming a company ("3M") or position, for
+    instance. Skills are always checked against the resume alone: claiming a
+    skill you lack is a lie regardless of context.
     """
-    resume_numbers = _numbers(resume_text)
-    invented_numbers = _numbers(rewrite) - resume_numbers
+    allowed_numbers = _numbers(resume_text) | _numbers(allowed_number_context)
+    invented_numbers = _numbers(text) - allowed_numbers
     if invented_numbers:
         return (f"introduces a figure not in your resume: "
                 f"{', '.join(sorted(invented_numbers))}")
 
-    invented_skills = _skills_in(rewrite) - _skills_in(resume_text)
+    invented_skills = _skills_in(text) - _skills_in(resume_text)
     if invented_skills:
         return (f"claims a skill not in your resume: "
                 f"{', '.join(sorted(invented_skills))}")
