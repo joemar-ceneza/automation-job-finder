@@ -123,6 +123,29 @@ SELECTORS = {
 }
 
 # ======================================================
+# AI MODE (all optional — the app is complete without it)
+# ======================================================
+# Which provider to use, or "none" to stay in Standard mode. Override in .env.
+#   claude              — Anthropic API, needs ANTHROPIC_API_KEY
+#   ollama / lmstudio   — a local model, no key, nothing leaves your machine
+#   openai              — OpenAI API, needs OPENAI_API_KEY (or AI_API_KEY)
+AI_PROVIDER = "none"
+
+# Model name for the chosen provider. For Claude, an Anthropic model id; for a
+# local runtime, whatever you have pulled (e.g. "llama3.1", "qwen2.5").
+AI_MODEL = "claude-opus-4-8"
+
+# Base URL for OpenAI-compatible providers. The defaults are the standard
+# local ports: Ollama 11434, LM Studio 1234.
+AI_BASE_URL = "http://localhost:11434/v1"   # Ollama
+
+# Effort for judgement tasks (gap narrative, rewriting). low|medium|high|xhigh|max
+AI_EFFORT = "high"
+
+# Seconds to wait on one AI call before giving up and falling back.
+AI_TIMEOUT_SECONDS = 60
+
+# ======================================================
 # RETRY
 # ======================================================
 RETRY_ATTEMPTS = 3

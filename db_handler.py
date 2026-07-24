@@ -71,6 +71,19 @@ CREATE TABLE IF NOT EXISTS application_events (
 )
 """
 
+# Provider-agnostic response cache — the cost control for AI mode. A job
+# description does not change between runs, so an analysis is paid for once.
+_AI_CACHE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS ai_cache (
+    cache_key     TEXT PRIMARY KEY,
+    model         TEXT,
+    response      TEXT NOT NULL,
+    input_tokens  INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    created_at    TEXT NOT NULL
+)
+"""
+
 _INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_job_skills_skill ON job_skills(skill)",
     "CREATE INDEX IF NOT EXISTS idx_job_skills_cat   ON job_skills(category)",
@@ -161,6 +174,7 @@ def init_db() -> None:
         connection.execute(_META_SCHEMA)
         connection.execute(_JOB_SKILLS_SCHEMA)
         connection.execute(_EVENTS_SCHEMA)
+        connection.execute(_AI_CACHE_SCHEMA)
         for statement in _INDEXES:
             connection.execute(statement)
 
@@ -501,6 +515,48 @@ def total_active_jobs() -> int:
     with closing(_connect()) as connection:
         return connection.execute(
             "SELECT COUNT(*) FROM jobs WHERE archived = 0").fetchone()[0]
+
+
+# ======================================================
+# PUBLIC API — AI RESPONSE CACHE
+# ======================================================
+def get_ai_cache(cache_key: str):
+    """Returns a cached LLMResponse for the key, or None. Marked from_cache."""
+    from llm import LLMResponse
+    with closing(_connect()) as connection:
+        row = connection.execute(
+            "SELECT model, response, input_tokens, output_tokens "
+            "FROM ai_cache WHERE cache_key = ?", (cache_key,)).fetchone()
+    if row is None:
+        return None
+    import json as _json
+    return LLMResponse(
+        data=_json.loads(row["response"]), model=row["model"] or "",
+        input_tokens=row["input_tokens"], output_tokens=row["output_tokens"],
+        from_cache=True)
+
+
+def put_ai_cache(cache_key: str, response) -> None:
+    """Stores an LLMResponse under the key."""
+    import json as _json
+    with closing(_connect()) as connection, connection:
+        connection.execute(
+            "INSERT OR REPLACE INTO ai_cache "
+            "(cache_key, model, response, input_tokens, output_tokens, "
+            "created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (cache_key, response.model, _json.dumps(response.data),
+             response.input_tokens, response.output_tokens, _now()))
+
+
+def ai_usage() -> dict:
+    """Total AI spend so far, for the cost meter."""
+    with closing(_connect()) as connection:
+        row = connection.execute(
+            "SELECT COUNT(*) AS calls, "
+            "COALESCE(SUM(input_tokens), 0) AS input_tokens, "
+            "COALESCE(SUM(output_tokens), 0) AS output_tokens "
+            "FROM ai_cache").fetchone()
+    return dict(row)
 
 
 # ======================================================

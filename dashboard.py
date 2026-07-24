@@ -14,11 +14,13 @@ import os
 import pandas as pd
 import streamlit as st
 
+import ai_explain
 import config
 import cover_letter
 import db_handler
 import documents
 import explain
+import llm
 import optimizer
 import resume_model
 import resume_parser
@@ -370,7 +372,7 @@ def _offer_downloads(slot: str, job_key: str) -> None:
 
 def _render_score_explanation(job: dict, resume_skills: list[str],
                               resume_text: str = "") -> None:
-    """Why this job scored what it scored — deterministic, no AI."""
+    """Why this job scored what it scored — deterministic, with optional AI."""
     result = explain.explain_job(job, resume_skills, resume_text)
     for line in result.lines:
         st.markdown(f"- {line}")
@@ -380,6 +382,45 @@ def _render_score_explanation(job: dict, resume_skills: list[str],
         chips = ([f"**{skill}** (title)" for skill in result.title_matches]
                  + list(result.body_matches))
         st.markdown(" · ".join(chips))
+
+    _render_ai_narrative(job, resume_skills, resume_text)
+
+
+def _render_ai_narrative(job: dict, resume_skills: list[str],
+                         resume_text: str) -> None:
+    """The optional AI narrative, grounded in the deterministic facts above."""
+    provider = llm.get_provider(db_handler)
+    if not provider.is_available():
+        st.caption("AI mode is off. Set a provider in `.env` "
+                   "(see `.env.example`) to add a written explanation here.")
+        return
+
+    key = f"ai_explain_{job['job_key']}"
+    if st.button("Explain with AI", key=f"btn_{key}"):
+        with st.spinner("Asking the model (about 15 seconds)…"):
+            st.session_state[key] = ai_explain.enrich(
+                job, resume_skills, resume_text, provider,
+                effort=config.AI_EFFORT)
+
+    result = st.session_state.get(key)
+    if result is None or not getattr(result, "ai_used", False):
+        if result is not None:
+            st.warning("The AI narrative was unavailable, so only the "
+                       "deterministic explanation above is shown.")
+        return
+
+    st.divider()
+    st.markdown(f"**AI take** · {result.model}"
+                + (" · cached" if result.from_cache else ""))
+    st.markdown(result.summary)
+    if result.strengths:
+        st.markdown("**Strengths** — " + "; ".join(result.strengths))
+    if result.weaknesses:
+        st.markdown("**Weak areas** — " + "; ".join(result.weaknesses))
+    if result.improvements:
+        st.markdown("**Do next** — " + "; ".join(result.improvements))
+    if result.advice:
+        st.caption(result.advice)
 
 
 def _render_tailor(job: dict, resume) -> None:

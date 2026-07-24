@@ -18,12 +18,14 @@ from dataclasses import asdict
 from datetime import date, datetime
 from logging.handlers import RotatingFileHandler
 
+import ai_explain
 import config
 import cover_letter
 import db_handler
 import dedupe
 import documents
 import email_handler
+import llm
 import matcher
 import optimizer
 import resume_model
@@ -118,6 +120,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--cover-letter", metavar="JOB",
                         help="Draft a cover letter for a job (job_key or URL) "
                              "and export it, then exit")
+    parser.add_argument("--explain", metavar="JOB",
+                        help="Explain why a job scored what it did, then exit")
+    parser.add_argument("--ai", action="store_true",
+                        help="Use the configured AI provider to enrich "
+                             "--explain (falls back to Standard if unavailable)")
+    parser.add_argument("--ai-usage", action="store_true",
+                        help="Show total AI token usage, then exit")
     parser.add_argument("--compare", metavar="JOB",
                         help="Rank every resume against a job, then exit")
     parser.add_argument("--resume", metavar="NAME", default=None,
@@ -158,8 +167,9 @@ def _parse_args() -> argparse.Namespace:
     maintenance_only = (args.set_status or args.generate_skills
                         or args.backup or args.calibrate or args.stalled
                         or args.import_resume or args.tailor
-                        or args.cover_letter or args.compare
-                        or args.list_resumes or args.set_default_resume
+                        or args.cover_letter or args.compare or args.explain
+                        or args.ai_usage or args.list_resumes
+                        or args.set_default_resume
                         or (args.prune_days is not None and not args.keyword))
     if not maintenance_only and (not args.resume_pdf or not args.keyword):
         parser.error("resume_pdf and keyword are required (unless using "
@@ -293,6 +303,57 @@ def _run_list_resumes() -> None:
                      marker, reference.name, len(resume.sections),
                      len(resume.listed_skills()), len(resume.all_bullets()))
     logging.info("  (* = used when --resume is omitted)")
+
+
+def _run_explain(args: argparse.Namespace) -> None:
+    """Explains one job's score, optionally with an AI narrative."""
+    job, resume = _load_job_and_resume(args.explain, args.resume)
+    if job is None:
+        return
+    resume_skills = resume_parser.find_matching_skills(
+        resume.full_text(), resume_parser.load_skills(args.skills))
+
+    provider = llm.get_provider(db_handler) if args.ai else llm.NullProvider()
+    result = ai_explain.enrich(job, resume_skills, resume.full_text(),
+                               provider, effort=config.AI_EFFORT)
+
+    logging.info("=" * 70)
+    logging.info("%s @ %s — %.1f%%", job["title"], job.get("company") or "?",
+                 result.base.score_percent)
+    logging.info("=" * 70)
+    for line in result.base.lines:
+        logging.info("  %s", line)
+
+    if not result.ai_used:
+        if args.ai:
+            logging.info("")
+            logging.info("AI narrative unavailable — showing the deterministic "
+                         "explanation only. Configure a provider in .env to "
+                         "enable it (see .env.example).")
+        return
+
+    logging.info("")
+    logging.info("AI narrative (%s%s):", result.model,
+                 ", cached" if result.from_cache else "")
+    logging.info("  %s", result.summary)
+    if result.strengths:
+        logging.info("  Strengths: %s", "; ".join(result.strengths))
+    if result.weaknesses:
+        logging.info("  Weak areas: %s", "; ".join(result.weaknesses))
+    if result.improvements:
+        logging.info("  Do next: %s", "; ".join(result.improvements))
+    if result.advice:
+        logging.info("  %s", result.advice)
+
+
+def _run_ai_usage() -> None:
+    """Reports total AI token spend."""
+    db_handler.init_db()
+    usage = db_handler.ai_usage()
+    logging.info("AI calls cached: %d", usage["calls"])
+    logging.info("Input tokens:  %d", usage["input_tokens"])
+    logging.info("Output tokens: %d", usage["output_tokens"])
+    logging.info("(Cost depends on your provider; local models are free.)")
 
 
 def _run_compare(args: argparse.Namespace) -> None:
@@ -483,6 +544,12 @@ def main() -> None:
     if args.set_default_resume:
         db_handler.init_db()
         resumes.set_default(args.set_default_resume)
+        return
+    if args.explain:
+        _run_explain(args)
+        return
+    if args.ai_usage:
+        _run_ai_usage()
         return
     if args.compare:
         _run_compare(args)
