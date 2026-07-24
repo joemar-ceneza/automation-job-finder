@@ -15,6 +15,7 @@ import pandas as pd
 import streamlit as st
 
 import ai_explain
+import ai_rewrite
 import config
 import cover_letter
 import db_handler
@@ -452,6 +453,56 @@ def _render_tailor(job: dict, resume) -> None:
         st.success(f"Written to {config.DOCUMENTS_DIR}")
 
     _offer_downloads("tailor_files", job["job_key"])
+    _render_ai_rewrite(job, result.resume)
+
+
+def _render_ai_rewrite(job: dict, tailored) -> None:
+    """AI bullet rewriting, with the fabrication verifier's verdict shown."""
+    provider = llm.get_provider(db_handler)
+    if not provider.is_available():
+        st.caption("AI mode is off. Set a provider in `.env` to rewrite the "
+                   "wording of these bullets for the job.")
+        return
+
+    st.divider()
+    st.caption("AI mode can rewrite the bullet wording for this job. It never "
+               "invents: any rewrite that adds a number or skill not in your "
+               "resume is rejected and your original kept.")
+    key = f"rewrite_{job['job_key']}"
+    if st.button("Improve wording with AI", key=f"btn_{key}"):
+        with st.spinner("Rewriting and fact-checking each bullet…"):
+            st.session_state[key] = ai_rewrite.rewrite_for_job(
+                tailored, job, provider, effort=config.AI_EFFORT)
+
+    result = st.session_state.get(key)
+    if result is None:
+        return
+    if not result.ai_used:
+        st.warning("The AI rewrite was unavailable — your tailored resume "
+                   "above is unchanged.")
+        return
+
+    st.markdown(f"Rewrote **{result.rewritten}** bullet(s), kept "
+                f"**{result.kept_original}** as written · {result.model}"
+                + (" · cached" if result.from_cache else ""))
+    if result.rejections:
+        with st.expander(f"{len(result.rejections)} rewrite(s) rejected as "
+                         "fabricated — your originals were kept"):
+            for rejection in result.rejections:
+                st.caption(rejection)
+
+    stem = documents.slugify(
+        f"rewritten-{job['title']}-{job.get('company') or ''}")
+    if st.button("Save rewritten resume", key=f"save_{key}", type="primary",
+                 width="stretch"):
+        paths = [documents.write(result.resume,
+                                 os.path.join(config.DOCUMENTS_DIR,
+                                              f"{stem}.{fmt}"), fmt)
+                 for fmt in config.DOCUMENT_FORMATS]
+        _remember("rewrite_files", job["job_key"], paths)
+        st.success(f"Written to {config.DOCUMENTS_DIR}. Review every line "
+                   "before sending.")
+    _offer_downloads("rewrite_files", job["job_key"])
 
 
 def _render_cover_letter(job: dict, resume) -> None:

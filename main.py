@@ -19,6 +19,7 @@ from datetime import date, datetime
 from logging.handlers import RotatingFileHandler
 
 import ai_explain
+import ai_rewrite
 import config
 import cover_letter
 import db_handler
@@ -120,6 +121,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--cover-letter", metavar="JOB",
                         help="Draft a cover letter for a job (job_key or URL) "
                              "and export it, then exit")
+    parser.add_argument("--rewrite", metavar="JOB",
+                        help="Tailor AND AI-rewrite your resume for a job, "
+                             "then export it (needs an AI provider), then exit")
     parser.add_argument("--explain", metavar="JOB",
                         help="Explain why a job scored what it did, then exit")
     parser.add_argument("--ai", action="store_true",
@@ -168,7 +172,7 @@ def _parse_args() -> argparse.Namespace:
                         or args.backup or args.calibrate or args.stalled
                         or args.import_resume or args.tailor
                         or args.cover_letter or args.compare or args.explain
-                        or args.ai_usage or args.list_resumes
+                        or args.rewrite or args.ai_usage or args.list_resumes
                         or args.set_default_resume
                         or (args.prune_days is not None and not args.keyword))
     if not maintenance_only and (not args.resume_pdf or not args.keyword):
@@ -303,6 +307,43 @@ def _run_list_resumes() -> None:
                      marker, reference.name, len(resume.sections),
                      len(resume.listed_skills()), len(resume.all_bullets()))
     logging.info("  (* = used when --resume is omitted)")
+
+
+def _run_rewrite(args: argparse.Namespace) -> None:
+    """Tailors the resume deterministically, then AI-rewrites its bullets."""
+    job, resume = _load_job_and_resume(args.rewrite, args.resume)
+    if job is None:
+        return
+
+    provider = llm.get_provider(db_handler)
+    if not provider.is_available():
+        logging.error("Resume rewriting needs an AI provider. Set one in .env "
+                      "(see .env.example) — or use --tailor for the "
+                      "deterministic restructure with no rewriting.")
+        return
+
+    # Restructure first (reorder sections, promote bullets), then rewrite the
+    # wording of the already-tailored resume.
+    tailored = optimizer.optimise(resume, job).resume
+    result = ai_rewrite.rewrite_for_job(tailored, job, provider,
+                                        effort=config.AI_EFFORT)
+    if not result.ai_used:
+        logging.error("No rewrite was produced — leaving your resume as is.")
+        return
+
+    logging.info("=" * 70)
+    logging.info("Rewrote %d bullet(s) for %s (%s%s)", result.rewritten,
+                 job["title"], result.model,
+                 ", cached" if result.from_cache else "")
+    logging.info("=" * 70)
+    for rejection in result.rejections:
+        logging.info("  Kept your original — rewrite %s", rejection)
+
+    stem = documents.slugify(
+        f"rewritten-{job['title']}-{job.get('company') or ''}")
+    _export_all(result.resume, stem, args.formats, documents.write)
+    logging.info("Review every rewritten line before sending — the wording is "
+                 "the model's, the facts are yours.")
 
 
 def _run_explain(args: argparse.Namespace) -> None:
@@ -544,6 +585,9 @@ def main() -> None:
     if args.set_default_resume:
         db_handler.init_db()
         resumes.set_default(args.set_default_resume)
+        return
+    if args.rewrite:
+        _run_rewrite(args)
         return
     if args.explain:
         _run_explain(args)
