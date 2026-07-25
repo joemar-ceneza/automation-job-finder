@@ -18,6 +18,7 @@ from dataclasses import asdict
 from datetime import date, datetime
 from logging.handlers import RotatingFileHandler
 
+import ai_company
 import ai_cover_letter
 import ai_explain
 import ai_interview
@@ -28,6 +29,7 @@ import ai_salary
 import ai_summary
 import analytics
 import app_settings
+import company
 import config
 import cover_letter
 import db_handler
@@ -154,6 +156,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--portfolio", metavar="JOB",
                         help="Rank your projects against a job — which to show "
                              "and what to lead with, then exit")
+    parser.add_argument("--company", metavar="NAME",
+                        help="What your corpus knows about an employer — "
+                             "posting cadence, pay, repeated roles, then exit")
     parser.add_argument("--ai", action="store_true",
                         help="Force AI enrichment on for --explain, "
                              "--cover-letter, --interview or --summary (falls "
@@ -220,7 +225,7 @@ def _parse_args() -> argparse.Namespace:
                         or args.import_resume or args.tailor
                         or args.cover_letter or args.compare or args.explain
                         or args.interview or args.summary or args.salary
-                        or args.portfolio
+                        or args.portfolio or args.company
                         or args.rewrite or args.ai_usage or args.propose_skills
                         or args.analytics or args.learn or args.list_resumes
                         or args.set_default_resume
@@ -596,6 +601,49 @@ def _run_salary(args: argparse.Namespace) -> None:
         logging.info("  Vs seniority: %s", reading.seniority_read)
 
 
+def _run_company(args: argparse.Namespace) -> None:
+    """Reports what your corpus knows about one employer."""
+    db_handler.init_db()
+    postings = db_handler.jobs_by_company(args.company)
+    if not postings:
+        logging.error("No tracked postings from '%s'.", args.company)
+        top = db_handler.companies(limit=8)
+        if top:
+            logging.info("Companies you track most: %s",
+                         ", ".join(f"{row['company']} ({row['postings']})"
+                                   for row in top))
+        return
+
+    profile = company.profile(args.company, postings)
+    logging.info("=" * 70)
+    logging.info("Company — %s", profile.name)
+    logging.info("=" * 70)
+    for line in profile.lines:
+        logging.info("  %s", line)
+
+    if not _use_ai(args, "company"):
+        return
+
+    provider = llm.get_provider(db_handler)
+    reading = ai_company.enrich(profile, postings, provider,
+                                effort=config.AI_EFFORT)
+    if not reading.ai_used:
+        logging.info("AI reading unavailable%s — the profile above stands.",
+                     f" ({reading.note})" if reading.note else "")
+        return
+
+    logging.info("")
+    logging.info("Inferred from their adverts, not researched (%s%s):",
+                 reading.model, ", cached" if reading.from_cache else "")
+    logging.info("  Culture: %s", reading.culture)
+    if reading.interview_process:
+        logging.info("  Process: %s", reading.interview_process)
+    for advantage in reading.advantages:
+        logging.info("  + %s", advantage)
+    for concern in reading.concerns:
+        logging.info("  - %s", concern)
+
+
 def _run_portfolio(args: argparse.Namespace) -> None:
     """Ranks your projects against one job, optionally with AI pitches."""
     db_handler.init_db()
@@ -947,6 +995,9 @@ def main() -> None:
         return
     if args.portfolio:
         _run_portfolio(args)
+        return
+    if args.company:
+        _run_company(args)
         return
     if args.ai_usage:
         _run_ai_usage()

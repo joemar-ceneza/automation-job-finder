@@ -16,6 +16,7 @@ import sys
 import pandas as pd
 import streamlit as st
 
+import ai_company
 import ai_cover_letter
 import ai_explain
 import ai_interview
@@ -26,6 +27,7 @@ import ai_salary
 import ai_summary
 import analytics
 import app_settings
+import company
 import config
 import cover_letter
 import db_handler
@@ -361,7 +363,34 @@ def _render_analytics() -> None:
                              and row["demand"] / total >= 0.01 else "")
                     st.caption(f"`{row['demand']:>3}` {row['skill']}{share}")
 
+    _render_cooccurrence(overall)
     _render_skill_proposals()
+
+
+def _render_cooccurrence(demand_rows: list[dict]) -> None:
+    """What else the jobs wanting a given skill ask for — a self-join, no AI."""
+    st.divider()
+    st.subheader("What goes with what")
+    skills = [row["skill"] for row in demand_rows]
+    if not skills:
+        return
+    skill = st.selectbox("Jobs asking for…", skills, key="cooc_skill")
+    result = db_handler.skill_cooccurrence(skill, limit=8)
+    base = result["base"]
+    if not result["rows"]:
+        st.caption(f"No other skills recorded alongside {skill}.")
+        return
+
+    quotable = base >= config.COOCCURRENCE_MIN_BASE
+    st.caption(f"Across the {base} posting(s) that ask for {skill}"
+               + ("" if quotable else
+                  f" — too few to quote a percentage from "
+                  f"(need {config.COOCCURRENCE_MIN_BASE}), so these are "
+                  f"raw counts"))
+    for row in result["rows"]:
+        share = (f"{round(row['together'] / base * 100)}% also want "
+                 if quotable else f"{row['together']} also want ")
+        st.markdown(f"- {share}**{row['skill']}**")
 
 
 def _apply_skill_proposal(canonical: str, category: str,
@@ -1046,6 +1075,94 @@ def _render_ai_portfolio(job: dict, base) -> None:
                "dropped, so what's here is defensible in an interview.")
 
 
+def _render_company(job: dict) -> None:
+    """What your own corpus knows about this employer — the honest subset."""
+    name = (job.get("company") or "").strip()
+    if not name:
+        st.info("This advert names no company — common on OnlineJobs.ph, and "
+                "worth treating as a small red flag in itself.")
+        return
+
+    postings = db_handler.jobs_by_company(name)
+    profile = company.profile(name, postings)
+    if not profile.postings:
+        st.info(f"Nothing else tracked from {name} yet.")
+        return
+
+    figures = st.columns(3)
+    figures[0].metric("Postings tracked", profile.postings)
+    figures[1].metric("Avg advertised pay",
+                      f"₱{profile.average_salary:,}"
+                      if profile.average_salary else "—")
+    figures[2].metric("Avg match to you",
+                      f"{profile.average_score}%"
+                      if profile.average_score is not None else "—")
+
+    if profile.posts_per_month:
+        st.markdown(f"Advertising for **{profile.days_active} days** — about "
+                    f"**{profile.posts_per_month} posting(s) a month**.")
+    repeated = [(role, count) for role, count in profile.repeated_roles
+                if count > 1]
+    if repeated:
+        st.markdown("**Repeatedly hiring for:** "
+                    + ", ".join(f"{role} ×{count}" for role, count in repeated))
+        st.caption("A role posted again and again is either growing or "
+                   "churning — worth asking which.")
+    if profile.locations:
+        st.caption("Locations: " + ", ".join(profile.locations))
+    if profile.arrangements:
+        st.caption("Arrangement: " + ", ".join(profile.arrangements))
+
+    with st.expander(f"Their {profile.postings} tracked posting(s)"):
+        for posting in postings:
+            st.markdown(f"- [{posting['title']}]({posting.get('url') or '#'})"
+                        f" · {posting.get('score_percent') or 0}%"
+                        f" · {(posting.get('first_seen') or '')[:10]}")
+
+    st.caption("Company size, ratings, and interview difficulty are "
+               "deliberately absent — that data cannot be collected within the "
+               "terms of the sites that hold it.")
+    _render_ai_company(profile, postings)
+
+
+def _render_ai_company(profile, postings: list[dict]) -> None:
+    """Optional reading of the employer's own adverts — inference, not fact."""
+    provider = llm.get_provider(db_handler)
+    if not provider.is_available():
+        st.caption("AI mode is off. Set a provider in `.env` to read what "
+                   "their adverts imply about how they work.")
+        return
+
+    key = f"ai_company_{profile.name}"
+    triggered = st.button("Read their adverts with AI", key=f"btn_{key}")
+    if triggered or (key not in st.session_state
+                     and app_settings.mode_for("company") == "ai"):
+        with st.spinner("Reading their adverts…"):
+            st.session_state[key] = ai_company.enrich(
+                profile, postings, provider, effort=config.AI_EFFORT)
+
+    result = st.session_state.get(key)
+    if result is None:
+        return
+    if not result.ai_used:
+        if result.note:
+            st.caption(f"AI reading unavailable: {result.note}")
+        return
+
+    st.divider()
+    st.markdown(f"**Inferred from their adverts** · {result.model}"
+                + (" · cached" if result.from_cache else ""))
+    st.markdown(result.culture)
+    if result.interview_process:
+        st.markdown(f"**Hiring process** — {result.interview_process}")
+    for advantage in result.advantages:
+        st.markdown(f"- ✅ {advantage}")
+    for concern in result.concerns:
+        st.markdown(f"- ⚠️ {concern}")
+    st.caption("This is inference from how they write their adverts — not "
+               "researched fact. Anything the adverts don't say is dropped.")
+
+
 def _render_comparison(job: dict) -> None:
     """Ranks every resume against this job — arithmetic, no AI."""
     references = resumes.available()
@@ -1159,9 +1276,9 @@ def _render_job_detail(frame: pd.DataFrame) -> None:
         return
 
     (summary_tab, score_tab, tailor_tab, letter_tab, interview_tab,
-     portfolio_tab, compare_tab) = st.tabs(
+     portfolio_tab, company_tab, compare_tab) = st.tabs(
         ["Summary", "Why this score", "Tailor resume", "Cover letter",
-         "Interview prep", "Portfolio", "Compare resumes"])
+         "Interview prep", "Portfolio", "Company", "Compare resumes"])
     with summary_tab:
         _render_summary(job)
     with score_tab:
@@ -1174,6 +1291,8 @@ def _render_job_detail(frame: pd.DataFrame) -> None:
         _render_interview(job, resume, resume_skills)
     with portfolio_tab:
         _render_portfolio(job)
+    with company_tab:
+        _render_company(job)
     with compare_tab:
         _render_comparison(job)
 
@@ -1353,6 +1472,7 @@ _CAPABILITY_LABELS = {
     "salary": "Salary read",
     "learning": "Learning roadmap",
     "portfolio": "Portfolio pitch",
+    "company": "Company read",
 }
 
 

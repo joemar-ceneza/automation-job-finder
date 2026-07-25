@@ -428,6 +428,60 @@ def all_stage_events() -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def jobs_by_company(company: str) -> list[dict]:
+    """
+    Every active posting from one company, newest first. The raw material for
+    the company profile — what your own database knows about an employer, which
+    is the only company intelligence that is honestly obtainable.
+    """
+    with closing(_connect()) as connection:
+        rows = connection.execute(
+            "SELECT job_key, title, company, location, url, salary, "
+            "salary_min, salary_max, work_arrangement, search_keyword, "
+            "score_percent, listing_date, first_seen, last_seen "
+            "FROM jobs WHERE archived = 0 AND company = ? COLLATE NOCASE "
+            "ORDER BY first_seen DESC", (company,)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def companies(limit: int = 50) -> list[dict]:
+    """Companies by how often they post — the hiring-cadence leaderboard."""
+    with closing(_connect()) as connection:
+        rows = connection.execute(
+            "SELECT company, COUNT(*) AS postings "
+            "FROM jobs WHERE archived = 0 AND company IS NOT NULL "
+            "AND TRIM(company) != '' "
+            "GROUP BY company COLLATE NOCASE "
+            "ORDER BY postings DESC, company LIMIT ?", (limit,)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def skill_cooccurrence(skill: str, limit: int = 10) -> dict:
+    """
+    What else the jobs asking for `skill` also ask for — a self-join on
+    job_skills. Returns {"base": <jobs wanting skill>, "rows": [{skill,
+    together}]}, so the caller can decide whether the base is big enough to
+    quote a percentage from.
+    """
+    with closing(_connect()) as connection:
+        base = connection.execute(
+            "SELECT COUNT(DISTINCT js.job_key) AS base FROM job_skills js "
+            "JOIN jobs j ON j.job_key = js.job_key "
+            "WHERE js.skill = ? AND j.archived = 0", (skill,)).fetchone()
+        rows = connection.execute(
+            "SELECT other.skill AS skill, "
+            "       COUNT(DISTINCT other.job_key) AS together "
+            "FROM job_skills base "
+            "JOIN job_skills other ON other.job_key = base.job_key "
+            "                     AND other.skill != base.skill "
+            "JOIN jobs j ON j.job_key = base.job_key "
+            "WHERE base.skill = ? AND j.archived = 0 "
+            "GROUP BY other.skill ORDER BY together DESC, other.skill "
+            "LIMIT ?", (skill, limit)).fetchall()
+    return {"base": base["base"] if base else 0,
+            "rows": [dict(row) for row in rows]}
+
+
 def salaried_jobs(role: str | None = None) -> list[dict]:
     """
     Active jobs that state a monthly salary — the corpus the salary bands

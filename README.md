@@ -115,6 +115,7 @@ live in the dashboard's **Job detail** tab.
 python main.py --summary JOB         # condense the advert — sections + red flags
 python main.py --salary JOB          # band the pay vs similar roles you track
 python main.py --portfolio JOB       # which of your projects to show for it
+python main.py --company NAME        # what your corpus knows about an employer
 python main.py --tailor JOB          # restructure your resume for the job (deterministic)
 python main.py --cover-letter JOB    # draft a cover letter from a template
 python main.py --explain JOB         # why the job scored what it did
@@ -136,6 +137,7 @@ python main.py --interview JOB --ai      # AI drafts a grounded answer for each 
 python main.py --summary JOB --ai        # AI prose read: pros/cons, growth, subtler red flags
 python main.py --salary JOB --ai         # AI competitiveness + negotiation read
 python main.py --portfolio JOB --ai      # AI pitch: why each project fits, what to lead with
+python main.py --company NAME --ai       # what their adverts imply (inference, not fact)
 python main.py --rewrite JOB             # tailor AND AI-rewrite the wording (needs a provider)
 python main.py --explain JOB --ai        # AI narrative on top of the deterministic score
 ```
@@ -324,6 +326,8 @@ automation-job-finder/
 ├── ai_cover_letter.py     # AI cover letters (--cover-letter --ai), same verifier
 ├── ai_interview.py        # AI interview answers (--interview --ai), same verifier
 ├── ai_summary.py          # AI job read (--summary --ai): pros/cons, growth, red flags
+├── company.py             # Employer profile from your own corpus (--company)
+├── ai_company.py          # Reads their adverts (--company --ai) — inference, labelled
 ├── portfolio.py           # Ranks data/portfolio.toml projects vs a job (--portfolio)
 ├── ai_portfolio.py        # AI project pitches (--portfolio --ai), verified
 ├── salary_bands.py        # Deterministic salary banding vs your corpus (--salary)

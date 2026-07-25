@@ -132,3 +132,45 @@ def test_a_tracked_skill_can_be_removed(db):
 def test_no_additions_by_default(db):
     import tracked_skills
     assert tracked_skills.additions() == []
+
+
+# ======================================================
+# SKILL CO-OCCURRENCE (a self-join over job_skills)
+# ======================================================
+def _job_row(job_key: str) -> dict:
+    return {"job_key": job_key, "title": "Developer", "company": "Acme",
+            "location": "Manila", "url": "https://example.com",
+            "source": "jobstreet", "salary": "", "salary_min": "",
+            "salary_max": "", "work_arrangement": "", "listing_date": "",
+            "status": "saved", "search_keyword": "python",
+            "score_percent": 10.0, "matched_skills": "", "required_years": "",
+            "description": ""}
+
+
+def test_cooccurrence_counts_what_appears_alongside(db):
+    db.insert_jobs([_job_row("j1"), _job_row("j2"), _job_row("j3")])
+    db.replace_job_skills([
+        ("j1", "Docker", "cloud", 0), ("j1", "AWS", "cloud", 0),
+        ("j2", "Docker", "cloud", 0), ("j2", "AWS", "cloud", 0),
+        ("j3", "Docker", "cloud", 0), ("j3", "Python", "language", 0),
+    ])
+    result = db.skill_cooccurrence("Docker", limit=5)
+    assert result["base"] == 3
+    together = {row["skill"]: row["together"] for row in result["rows"]}
+    assert together["AWS"] == 2
+    assert together["Python"] == 1
+
+
+def test_cooccurrence_never_pairs_a_skill_with_itself(db):
+    db.insert_jobs([_job_row("j1")])
+    db.replace_job_skills([("j1", "Docker", "cloud", 0),
+                           ("j1", "AWS", "cloud", 0)])
+    result = db.skill_cooccurrence("Docker", limit=5)
+    assert "Docker" not in [row["skill"] for row in result["rows"]]
+
+
+def test_cooccurrence_of_an_unknown_skill_is_empty(db):
+    db.insert_jobs([_job_row("j1")])
+    db.replace_job_skills([("j1", "Docker", "cloud", 0)])
+    result = db.skill_cooccurrence("Kubernetes", limit=5)
+    assert result["base"] == 0 and result["rows"] == []

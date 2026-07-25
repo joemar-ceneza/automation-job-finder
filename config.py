@@ -163,6 +163,7 @@ MODES = {
     "salary": "standard",
     "learning": "standard",
     "portfolio": "standard",
+    "company": "standard",
 }
 
 # Rough list prices (USD per 1M tokens) as (input, output), for the cost meter.
@@ -235,6 +236,12 @@ CALIBRATION_MIN_JOBS = 150
 # Most PH ads state no salary, so the sample is always smaller than the job
 # count; below this it is a guess, not a benchmark.
 SALARY_MIN_SAMPLES = 30
+
+# Fewest postings asking for a skill before co-occurrence is quoted as a
+# percentage ("72% of Docker jobs also want AWS") rather than a raw count.
+# Deliberately lower than CALIBRATION_MIN_JOBS: that gate guards shares of the
+# whole corpus, while this denominator is only the jobs wanting one skill.
+COOCCURRENCE_MIN_BASE = 20
 
 # A stored description longer than this came from a detail page rather than a
 # search card, so --calibrate can report how much of the corpus was scored on
