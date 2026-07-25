@@ -145,6 +145,28 @@ AI_EFFORT = "high"
 # Seconds to wait on one AI call before giving up and falling back.
 AI_TIMEOUT_SECONDS = 60
 
+# Default mode per capability: "standard" (deterministic only) or "ai" (run the
+# AI enrichment by default). Standard is always safe; a capability set to "ai"
+# still falls back to Standard when no provider is configured or a call fails.
+# Override per capability in .env with AI_MODE_<CAP> (e.g. AI_MODE_SUMMARY=ai),
+# or from the dashboard's Settings tab (stored per database).
+MODES = {
+    "explain": "standard",
+    "summary": "standard",
+    "cover_letter": "standard",
+    "interview": "standard",
+}
+
+# Rough list prices (USD per 1M tokens) as (input, output), for the cost meter.
+# Local models (Ollama, LM Studio) are free, so only cloud models need an entry;
+# an unknown model shows token counts without a dollar estimate.
+AI_PRICES = {
+    "claude-opus-4-8": (5.0, 25.0),
+    "claude-opus-4-7": (5.0, 25.0),
+    "claude-sonnet-5": (3.0, 15.0),
+    "claude-haiku-4-5": (1.0, 5.0),
+}
+
 # ======================================================
 # RETRY
 # ======================================================

@@ -21,6 +21,7 @@ import ai_explain
 import ai_interview
 import ai_rewrite
 import ai_summary
+import app_settings
 import config
 import cover_letter
 import db_handler
@@ -467,7 +468,9 @@ def _render_ai_summary(job: dict, base) -> None:
 
     st.divider()
     key = f"ai_summary_{job['job_key']}"
-    if st.button("Summarise with AI", key=f"btn_{key}"):
+    triggered = st.button("Summarise with AI", key=f"btn_{key}")
+    if triggered or (key not in st.session_state
+                     and app_settings.mode_for("summary") == "ai"):
         with st.spinner("Reading the advert…"):
             st.session_state[key] = ai_summary.enrich(
                 job, base, provider, effort=config.AI_EFFORT)
@@ -520,7 +523,9 @@ def _render_ai_narrative(job: dict, resume_skills: list[str],
         return
 
     key = f"ai_explain_{job['job_key']}"
-    if st.button("Explain with AI", key=f"btn_{key}"):
+    triggered = st.button("Explain with AI", key=f"btn_{key}")
+    if triggered or (key not in st.session_state
+                     and app_settings.mode_for("explain") == "ai"):
         with st.spinner("Asking the model (about 15 seconds)…"):
             st.session_state[key] = ai_explain.enrich(
                 job, resume_skills, resume_text, provider,
@@ -649,10 +654,12 @@ def _render_cover_letter(job: dict, resume) -> None:
     use_ai = False
     if provider.is_available():
         use_ai = st.checkbox(
-            "Write the body with AI", value=False,
+            "Write the body with AI",
+            value=app_settings.mode_for("cover_letter") == "ai",
             help="The model writes the letter from your real accomplishments. "
                  "Any paragraph that invents a number or skill not in your "
-                 "resume is rejected and the template letter used instead.")
+                 "resume is rejected and the template letter used instead. "
+                 "Default set in Settings.")
 
     if use_ai:
         with st.spinner("Writing and fact-checking the letter…"):
@@ -743,7 +750,9 @@ def _render_ai_answers(job: dict, resume, prep) -> None:
                "from your real accomplishments. Any answer that claims a skill "
                "or number not in your resume is dropped.")
     key = f"interview_ai_{job['job_key']}"
-    if st.button("Draft answers with AI", key=f"btn_{key}"):
+    triggered = st.button("Draft answers with AI", key=f"btn_{key}")
+    if triggered or (key not in st.session_state
+                     and app_settings.mode_for("interview") == "ai"):
         with st.spinner("Drafting and fact-checking each answer…"):
             st.session_state[key] = ai_interview.enrich(
                 resume, job, prep, provider, effort=config.AI_EFFORT)
@@ -1061,6 +1070,63 @@ def _render_run_tab() -> None:
 
 
 # ======================================================
+# SETTINGS (provider, per-capability mode, cost meter)
+# ======================================================
+_CAPABILITY_LABELS = {
+    "explain": "Score explanation",
+    "summary": "Job summary",
+    "cover_letter": "Cover letter",
+    "interview": "Interview prep",
+}
+
+
+def _render_settings() -> None:
+    """Provider status, per-capability default mode, and the cost meter."""
+    provider = llm.get_provider(db_handler)
+    usage = app_settings.usage_summary()
+
+    st.subheader("AI provider")
+    if provider.is_available():
+        st.success(f"Provider ready: **{usage['provider']}** · model "
+                   f"`{usage['model']}`")
+    else:
+        st.info("AI mode is off — no provider configured. Set one in `.env` "
+                "(see `.env.example`); until then every feature runs in "
+                "Standard mode regardless of the settings below.")
+
+    st.subheader("Default mode per feature")
+    st.caption("Standard is deterministic and free. Set a feature to AI to run "
+               "its enrichment by default — it still falls back to Standard if "
+               "no provider is configured or a call fails. You can always "
+               "override per action.")
+    for capability in app_settings.CAPABILITIES:
+        current = app_settings.mode_for(capability)
+        choice = st.radio(
+            _CAPABILITY_LABELS.get(capability, capability),
+            ["standard", "ai"],
+            index=0 if current == "standard" else 1,
+            horizontal=True, key=f"mode_{capability}")
+        if choice != current:
+            app_settings.set_mode(capability, choice)
+            st.rerun()
+
+    st.subheader("Cost meter")
+    columns = st.columns(3)
+    columns[0].metric("AI calls (cached)", f"{usage['calls']:,}")
+    columns[1].metric("Input tokens", f"{usage['input_tokens']:,}")
+    columns[2].metric("Output tokens", f"{usage['output_tokens']:,}")
+    if usage["local"]:
+        st.caption("Estimated cost: **$0.00** — a local model, nothing billed.")
+    elif usage["cost_usd"] is not None:
+        st.caption(f"Estimated cost: **${usage['cost_usd']:.2f}** at list price "
+                   f"for `{usage['model']}` (cached calls cost nothing to "
+                   "re-run).")
+    else:
+        st.caption(f"Estimated cost: unknown — no list price on file for "
+                   f"`{usage['model']}`.")
+
+
+# ======================================================
 # PAGE
 # ======================================================
 def run_dashboard() -> None:
@@ -1100,8 +1166,10 @@ def run_dashboard() -> None:
             st.caption(f"{hidden} repeat posting(s) hidden — untick "
                        "*Hide repeat postings* in the sidebar to see them.")
 
-    matches_tab, detail_tab, board_tab, analytics_tab, run_tab = st.tabs(
-        ["Matches", "Job detail", "Board", "Skill demand", "Run & tools"])
+    (matches_tab, detail_tab, board_tab, analytics_tab, run_tab,
+     settings_tab) = st.tabs(
+        ["Matches", "Job detail", "Board", "Skill demand", "Run & tools",
+         "Settings"])
 
     with matches_tab:
         st.caption("Change any row's Status, then click Save.")
@@ -1120,6 +1188,9 @@ def run_dashboard() -> None:
 
     with run_tab:
         _render_run_tab()
+
+    with settings_tab:
+        _render_settings()
 
 
 run_dashboard()

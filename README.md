@@ -102,7 +102,11 @@ python main.py --compare JOB         # rank every resume in resumes/ against the
 
 **AI mode** is optional and off by default. Configure a provider in `.env`
 (see `.env.example` — Anthropic, or a local model via Ollama / LM Studio), then
-add `--ai` to write real prose instead of filling a template:
+add `--ai` to write real prose instead of filling a template. You can also set a
+**default mode per feature** in the dashboard's **Settings** tab (or with
+`AI_MODE_<FEATURE>` in `.env`) so a feature runs AI without the flag every time;
+`--ai` forces it on for one run, `--no-ai` forces it off. The Settings tab also
+shows a **cost meter** (token spend and an estimate — $0 for local models):
 
 ```
 python main.py --cover-letter JOB --ai   # AI writes the letter body from your resume
@@ -200,8 +204,9 @@ full descriptions, email digest — every flag) and the one-shot commands
 AI usage) as buttons, streaming the output live. It runs the same `main.py`
 under the hood, so you can drive the whole tool from either the terminal or the
 UI — including the very first search into an empty database. The per-job
-**Job detail** tab covers tailoring, cover letters, interview prep, resume
-comparison, and every AI mode.
+**Job detail** tab covers the summary, tailoring, cover letters, interview prep,
+resume comparison, and every AI mode. The **Settings** tab picks the default AI
+mode per feature and shows the cost meter.
 
 ## Persistence & tracking
 - `output/jobs.db` (SQLite) is the source of truth. Each job stores its
@@ -284,6 +289,7 @@ automation-job-finder/
 ├── summary.py             # Deterministic job summary + red flags (--summary)
 ├── cover_letter.py        # Template cover letters (--cover-letter)
 ├── documents.py           # Export resumes/letters to DOCX / PDF / Markdown
+├── app_settings.py        # Per-feature AI mode (config.MODES) + the cost meter
 ├── llm.py                 # AI transport layer: provider protocol, cache, factory
 ├── llm_providers.py       # Claude + OpenAI-compatible provider adapters
 ├── ai_rewrite.py          # AI bullet rewriting + code-enforced fabrication verifier

@@ -23,6 +23,7 @@ import ai_explain
 import ai_interview
 import ai_rewrite
 import ai_summary
+import app_settings
 import config
 import cover_letter
 import db_handler
@@ -141,9 +142,12 @@ def _parse_args() -> argparse.Namespace:
                         help="Summarise a job — sections and red flags — then "
                              "exit")
     parser.add_argument("--ai", action="store_true",
-                        help="Use the configured AI provider to enrich "
-                             "--explain, --cover-letter, --interview or "
-                             "--summary (falls back to Standard if unavailable)")
+                        help="Force AI enrichment on for --explain, "
+                             "--cover-letter, --interview or --summary (falls "
+                             "back to Standard if unavailable)")
+    parser.add_argument("--no-ai", action="store_true",
+                        help="Force AI off for this run, overriding a "
+                             "capability whose default mode is 'ai'")
     parser.add_argument("--ai-usage", action="store_true",
                         help="Show total AI token usage, then exit")
     parser.add_argument("--propose-skills", action="store_true",
@@ -369,6 +373,18 @@ def _run_rewrite(args: argparse.Namespace) -> None:
                  "the model's, the facts are yours.")
 
 
+def _use_ai(args: argparse.Namespace, capability: str) -> bool:
+    """
+    Whether to run AI for a capability this invocation: --no-ai forces off,
+    --ai forces on, otherwise the capability's configured default mode decides.
+    """
+    if args.no_ai:
+        return False
+    if args.ai:
+        return True
+    return app_settings.mode_for(capability) == "ai"
+
+
 def _run_explain(args: argparse.Namespace) -> None:
     """Explains one job's score, optionally with an AI narrative."""
     job, resume = _load_job_and_resume(args.explain, args.resume)
@@ -377,7 +393,8 @@ def _run_explain(args: argparse.Namespace) -> None:
     resume_skills = resume_parser.find_matching_skills(
         resume.full_text(), resume_parser.load_skills(args.skills))
 
-    provider = llm.get_provider(db_handler) if args.ai else llm.NullProvider()
+    use_ai = _use_ai(args, "explain")
+    provider = llm.get_provider(db_handler) if use_ai else llm.NullProvider()
     result = ai_explain.enrich(job, resume_skills, resume.full_text(),
                                provider, effort=config.AI_EFFORT)
 
@@ -389,7 +406,7 @@ def _run_explain(args: argparse.Namespace) -> None:
         logging.info("  %s", line)
 
     if not result.ai_used:
-        if args.ai:
+        if use_ai:
             logging.info("")
             logging.info("AI narrative unavailable — showing the deterministic "
                          "explanation only. Configure a provider in .env to "
@@ -428,7 +445,7 @@ def _run_interview(args: argparse.Namespace) -> None:
         logging.info("  %s", line)
     logging.info("=" * 70)
 
-    if not args.ai:
+    if not _use_ai(args, "interview"):
         logging.info("These are talking points from your own resume — rehearse "
                      "them in your words, don't read them.")
         return
@@ -467,7 +484,7 @@ def _run_summary(args: argparse.Namespace) -> None:
         logging.info("  %s", line)
     logging.info("=" * 70)
 
-    if not args.ai:
+    if not _use_ai(args, "summary"):
         return
 
     provider = llm.get_provider(db_handler)
@@ -521,13 +538,24 @@ def _run_propose_skills(args: argparse.Namespace) -> None:
 
 
 def _run_ai_usage() -> None:
-    """Reports total AI token spend."""
+    """Reports total AI token spend, the cost estimate, and per-capability modes."""
     db_handler.init_db()
-    usage = db_handler.ai_usage()
+    usage = app_settings.usage_summary()
+    logging.info("Provider: %s · model: %s", usage["provider"], usage["model"])
     logging.info("AI calls cached: %d", usage["calls"])
     logging.info("Input tokens:  %d", usage["input_tokens"])
     logging.info("Output tokens: %d", usage["output_tokens"])
-    logging.info("(Cost depends on your provider; local models are free.)")
+    if usage["local"]:
+        logging.info("Estimated cost: $0.00 (local model — nothing billed).")
+    elif usage["cost_usd"] is not None:
+        logging.info("Estimated cost: $%.2f (list price for %s).",
+                     usage["cost_usd"], usage["model"])
+    else:
+        logging.info("Estimated cost: unknown (no list price for %s).",
+                     usage["model"])
+    logging.info("Default modes: %s",
+                 ", ".join(f"{cap}={mode}"
+                           for cap, mode in app_settings.all_modes().items()))
 
 
 def _run_compare(args: argparse.Namespace) -> None:
@@ -603,7 +631,7 @@ def _run_cover_letter(args: argparse.Namespace) -> None:
                       ", ".join(cover_letter.available_tones()))
         return
 
-    if args.ai:
+    if _use_ai(args, "cover_letter"):
         provider = llm.get_provider(db_handler)
         letter = ai_cover_letter.compose(resume, job, provider, tone=args.tone,
                                          recipient=args.recipient,
