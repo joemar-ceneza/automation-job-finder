@@ -20,6 +20,7 @@ import ai_cover_letter
 import ai_explain
 import ai_interview
 import ai_learning
+import ai_portfolio
 import ai_rewrite
 import ai_salary
 import ai_summary
@@ -34,6 +35,7 @@ import interview
 import learning
 import llm
 import optimizer
+import portfolio
 import resume_model
 import resume_parser
 import resumes
@@ -972,6 +974,78 @@ def _render_ai_answers(job: dict, resume, prep) -> None:
                "phrasing is a starting point.")
 
 
+def _render_portfolio(job: dict) -> None:
+    """Which of your projects to show for this job, ranked by the job scorer."""
+    projects = portfolio.load()
+    if not projects:
+        st.info("No projects yet. Add them to "
+                f"`{os.path.relpath(config.PORTFOLIO_FILE, config.BASE_DIR)}` "
+                "— each one tagged with the technologies it demonstrates — and "
+                "they'll be ranked against every job here.")
+        return
+
+    result = portfolio.match_job(job, projects)
+    best = result.best
+    if best and best.score_percent > 0:
+        st.success(f"**Lead with {best.project.name}** — it shows "
+                   f"{', '.join(best.matched[:3])}, which this advert asks for.")
+    else:
+        st.warning("None of your projects use what this advert asks for. Lead "
+                   "with the closest one and be explicit about the "
+                   "transferable parts.")
+
+    for match in result.matches:
+        project = match.project
+        heading = (f"**{project.name}** — {match.score_percent}%"
+                   + (f"  ·  [link]({project.url})" if project.url else ""))
+        st.markdown(heading)
+        if project.summary:
+            st.caption(project.summary)
+        if match.matched:
+            st.markdown("Demonstrates: "
+                        + " · ".join(f"**{tag}**" if tag in match.title_matches
+                                     else tag for tag in match.matched))
+        if match.unmatched:
+            st.caption("Also uses: " + ", ".join(match.unmatched))
+        st.divider()
+
+    _render_ai_portfolio(job, result)
+
+
+def _render_ai_portfolio(job: dict, base) -> None:
+    """Optional AI pitches — verified against what each project actually states."""
+    provider = llm.get_provider(db_handler)
+    if not provider.is_available():
+        st.caption("AI mode is off. Set a provider in `.env` for a written "
+                   "pitch on why each project fits this role.")
+        return
+
+    key = f"ai_portfolio_{job['job_key']}"
+    triggered = st.button("Pitch these projects with AI", key=f"btn_{key}")
+    if triggered or (key not in st.session_state
+                     and app_settings.mode_for("portfolio") == "ai"):
+        with st.spinner("Writing and fact-checking each pitch…"):
+            st.session_state[key] = ai_portfolio.enrich(
+                job, base, provider, effort=config.AI_EFFORT)
+
+    result = st.session_state.get(key)
+    if result is None:
+        return
+    if not result.ai_used:
+        if result.note:
+            st.caption(f"AI pitches unavailable: {result.note}")
+        return
+
+    st.markdown(f"**AI pitches** · {result.model}"
+                + (" · cached" if result.from_cache else ""))
+    for pitch in result.pitches:
+        st.markdown(f"**{pitch.match.project.name}** — {pitch.why_it_fits}")
+        if pitch.lead_with:
+            st.caption(f"Lead with: {pitch.lead_with}")
+    st.caption("Any pitch claiming something a project doesn't state is "
+               "dropped, so what's here is defensible in an interview.")
+
+
 def _render_comparison(job: dict) -> None:
     """Ranks every resume against this job — arithmetic, no AI."""
     references = resumes.available()
@@ -1085,9 +1159,9 @@ def _render_job_detail(frame: pd.DataFrame) -> None:
         return
 
     (summary_tab, score_tab, tailor_tab, letter_tab, interview_tab,
-     compare_tab) = st.tabs(
+     portfolio_tab, compare_tab) = st.tabs(
         ["Summary", "Why this score", "Tailor resume", "Cover letter",
-         "Interview prep", "Compare resumes"])
+         "Interview prep", "Portfolio", "Compare resumes"])
     with summary_tab:
         _render_summary(job)
     with score_tab:
@@ -1098,6 +1172,8 @@ def _render_job_detail(frame: pd.DataFrame) -> None:
         _render_cover_letter(job, resume)
     with interview_tab:
         _render_interview(job, resume, resume_skills)
+    with portfolio_tab:
+        _render_portfolio(job)
     with compare_tab:
         _render_comparison(job)
 
@@ -1276,6 +1352,7 @@ _CAPABILITY_LABELS = {
     "interview": "Interview prep",
     "salary": "Salary read",
     "learning": "Learning roadmap",
+    "portfolio": "Portfolio pitch",
 }
 
 

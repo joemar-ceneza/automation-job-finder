@@ -62,6 +62,17 @@ def _score_job(title: str, body: str,
     return round(score, 1), title_matches, body_matches
 
 
+def score_against(title: str, body: str,
+                  skills: list[str]) -> tuple[float, list[str], list[str]]:
+    """
+    The scorer, exposed for callers that score something other than a resume
+    against a job — portfolio matching passes a project's technology tags here,
+    so a project ranks against a job exactly the way a resume does and there is
+    no second scoring algorithm to keep in step with this one.
+    """
+    return _score_job(title, body, skills)
+
+
 # ======================================================
 # SCALE CALIBRATION
 # ======================================================

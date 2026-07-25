@@ -38,6 +38,11 @@ MASTER_RESUME_FILE = os.path.join(BASE_DIR, "master_resume.md")
 DOCUMENTS_DIR = os.path.join(OUTPUT_DIR, "documents")
 DOCUMENT_FORMATS = ["md", "docx", "pdf"]
 
+# Your projects, for portfolio matching. TOML rather than YAML so it stays
+# hand-editable with comments and needs no extra dependency (tomllib is stdlib
+# on 3.11+). Edit it directly; nothing writes to it.
+PORTFOLIO_FILE = os.path.join(BASE_DIR, "data", "portfolio.toml")
+
 # Cover letter templates. Adding a .txt file here adds a tone — no code change.
 COVER_LETTER_TEMPLATE_DIR = os.path.join(BASE_DIR, "data", "cover_letters")
 COVER_LETTER_TONE = "direct"
@@ -157,6 +162,7 @@ MODES = {
     "interview": "standard",
     "salary": "standard",
     "learning": "standard",
+    "portfolio": "standard",
 }
 
 # Rough list prices (USD per 1M tokens) as (input, output), for the cost meter.

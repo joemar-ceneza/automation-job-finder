@@ -22,6 +22,7 @@ import ai_cover_letter
 import ai_explain
 import ai_interview
 import ai_learning
+import ai_portfolio
 import ai_rewrite
 import ai_salary
 import ai_summary
@@ -39,6 +40,7 @@ import learning
 import llm
 import matcher
 import optimizer
+import portfolio
 import resume_model
 import resume_import
 import resume_parser
@@ -149,6 +151,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--salary", metavar="JOB",
                         help="Band a job's pay against similar roles you've "
                              "tracked, with yearly/hourly figures, then exit")
+    parser.add_argument("--portfolio", metavar="JOB",
+                        help="Rank your projects against a job — which to show "
+                             "and what to lead with, then exit")
     parser.add_argument("--ai", action="store_true",
                         help="Force AI enrichment on for --explain, "
                              "--cover-letter, --interview or --summary (falls "
@@ -215,6 +220,7 @@ def _parse_args() -> argparse.Namespace:
                         or args.import_resume or args.tailor
                         or args.cover_letter or args.compare or args.explain
                         or args.interview or args.summary or args.salary
+                        or args.portfolio
                         or args.rewrite or args.ai_usage or args.propose_skills
                         or args.analytics or args.learn or args.list_resumes
                         or args.set_default_resume
@@ -590,6 +596,49 @@ def _run_salary(args: argparse.Namespace) -> None:
         logging.info("  Vs seniority: %s", reading.seniority_read)
 
 
+def _run_portfolio(args: argparse.Namespace) -> None:
+    """Ranks your projects against one job, optionally with AI pitches."""
+    db_handler.init_db()
+    job = db_handler.get_job(args.portfolio)
+    if job is None:
+        logging.error("No job matching '%s' in the database.", args.portfolio)
+        return
+
+    projects = portfolio.load()
+    if not projects:
+        logging.warning("No projects found in %s — add some to match them "
+                        "against jobs.", config.PORTFOLIO_FILE)
+        return
+
+    result = portfolio.match_job(job, projects)
+    logging.info("=" * 70)
+    logging.info("Portfolio — %s @ %s", job.get("title", ""),
+                 job.get("company") or "?")
+    logging.info("=" * 70)
+    for line in result.lines:
+        logging.info("  %s", line)
+
+    if not _use_ai(args, "portfolio"):
+        return
+
+    provider = llm.get_provider(db_handler)
+    pitched = ai_portfolio.enrich(job, result, provider,
+                                  effort=config.AI_EFFORT)
+    if not pitched.ai_used:
+        logging.info("AI pitches unavailable%s — the ranking above stands.",
+                     f" ({pitched.note})" if pitched.note else "")
+        return
+
+    logging.info("")
+    logging.info("AI pitches (%s%s):", pitched.model,
+                 ", cached" if pitched.from_cache else "")
+    for pitch in pitched.pitches:
+        logging.info("  %s", pitch.match.project.name)
+        logging.info("     %s", pitch.why_it_fits)
+        if pitch.lead_with:
+            logging.info("     Lead with: %s", pitch.lead_with)
+
+
 def _run_learn(args: argparse.Namespace) -> None:
     """Recommends what to learn next, in prerequisite order."""
     db_handler.init_db()
@@ -895,6 +944,9 @@ def main() -> None:
         return
     if args.salary:
         _run_salary(args)
+        return
+    if args.portfolio:
+        _run_portfolio(args)
         return
     if args.ai_usage:
         _run_ai_usage()

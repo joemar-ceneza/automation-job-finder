@@ -1,0 +1,34 @@
+# Your portfolio — the projects you'd point an employer at.
+#
+# Each project is scored against a job with the same scorer that ranks your
+# resume, with `tech` standing in for a resume's skills. So the project that
+# comes top for a job is top for the same reason the job ranked for you.
+#
+# Keep `tech` in the vocabulary the scorer knows (the names in skills.txt or
+# config.MASTER_SKILLS — aliases like "React.js" for "React JS" work too), or a
+# genuinely relevant project will score zero and never surface.
+#
+# Add a project by copying a [[project]] block. Nothing writes to this file.
+
+[[project]]
+name = "Automation Job Finder"
+url = "https://github.com/joemar-ceneza/automation-job-finder"
+tech = ["Python", "Playwright", "SQLite", "Streamlit", "Data extraction",
+        "Process automation", "Pandas", "Pytest"]
+summary = """Scrapes JobStreet PH and OnlineJobs.ph, scores every listing \
+against my resume, and tracks applications through an eleven-stage pipeline. \
+Includes an optional local-LLM layer that never fabricates: generated resume \
+bullets and cover letters are verified in code against the source resume."""
+highlights = [
+    "Deterministic core — every feature works offline with no API key",
+    "Fabrication verifier rejects any AI text claiming a skill or figure the resume lacks",
+    "353 tests, none of which call a real model",
+]
+
+# --- copy this block to add your own -----------------------------------
+# [[project]]
+# name = ""
+# url = ""
+# tech = ["Python", "React.js"]
+# summary = """What it does and why it mattered."""
+# highlights = ["A specific, concrete result"]
