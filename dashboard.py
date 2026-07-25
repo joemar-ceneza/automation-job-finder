@@ -19,6 +19,7 @@ import streamlit as st
 import ai_cover_letter
 import ai_explain
 import ai_interview
+import ai_learning
 import ai_rewrite
 import ai_salary
 import ai_summary
@@ -30,6 +31,7 @@ import db_handler
 import documents
 import explain
 import interview
+import learning
 import llm
 import optimizer
 import resume_model
@@ -397,6 +399,93 @@ def _render_skill_proposals() -> None:
                                       proposal.merge_from)
             st.success(f"Now tracking {proposal.canonical}.")
             st.rerun()
+
+
+def _render_learning() -> None:
+    """What to learn next — demand-ranked, in prerequisite order."""
+    st.divider()
+    st.subheader("What to learn next")
+    resume, _skills = _selected_resume()
+    if resume is None:
+        st.caption("Create a resume to get study recommendations — the plan is "
+                   "built from the gap between it and what your tracked jobs "
+                   "ask for.")
+        return
+
+    demand_rows = db_handler.skill_demand(limit=200)
+    if not demand_rows:
+        st.caption("No skill demand recorded yet. Run a search (or `--rescore`) "
+                   "to populate it.")
+        return
+
+    limit = st.slider("How many gaps to plan for", 1, 10, 5, key="learn_limit")
+    result = learning.plan(resume.full_text(), demand_rows, limit=limit)
+    if not result.steps:
+        st.success("Nothing to recommend — your resume already covers what "
+                   "your tracked jobs ask for most.")
+        return
+
+    st.caption(f"Ordered so foundations come first. Roughly "
+               f"**{result.total_hours} hours** to close all "
+               f"{len(result.steps)}.")
+    for index, step in enumerate(result.steps, 1):
+        detail = []
+        if step.demand:
+            detail.append(f"{step.demand} job(s)")
+        if step.difficulty:
+            detail.append(step.difficulty)
+        if step.hours:
+            detail.append(f"~{step.hours}h")
+        foundation = (f" — foundation for {', '.join(step.unlocks)}"
+                      if step.is_prerequisite and step.unlocks else "")
+        st.markdown(f"**{index}. {step.skill}**"
+                    + (f"  ·  {' · '.join(detail)}" if detail else "")
+                    + foundation)
+        for label, url in step.resources:
+            st.caption(f"[{label}]({url})")
+        if not step.mapped:
+            st.caption("No study estimate on file for this one yet.")
+
+    _render_ai_learning(result, resume)
+
+
+def _render_ai_learning(base, resume) -> None:
+    """Optional AI roadmap around the computed plan — never its own links."""
+    provider = llm.get_provider(db_handler)
+    if not provider.is_available():
+        st.caption("AI mode is off. Set a provider in `.env` for a week-by-week "
+                   "plan and project ideas around this.")
+        return
+
+    key = "ai_learning_plan"
+    triggered = st.button("Write a study roadmap with AI", key=f"btn_{key}")
+    if triggered or (key not in st.session_state
+                     and app_settings.mode_for("learning") == "ai"):
+        with st.spinner("Writing the roadmap…"):
+            st.session_state[key] = ai_learning.enrich(
+                base, resume.listed_skills(), provider,
+                effort=config.AI_EFFORT)
+
+    result = st.session_state.get(key)
+    if result is None:
+        return
+    if not result.ai_used:
+        if result.note:
+            st.caption(f"AI roadmap unavailable: {result.note}")
+        return
+
+    st.markdown(f"**AI roadmap** · {result.model}"
+                + (" · cached" if result.from_cache else ""))
+    st.markdown(result.roadmap)
+    if result.weekly_plan:
+        for week in result.weekly_plan:
+            st.markdown(f"- {week}")
+    if result.projects:
+        st.markdown("**Project ideas**")
+        for project in result.projects:
+            st.markdown(f"- {project}")
+    st.caption("Links above come from the curated map, not the model — it is "
+               "not allowed to supply its own.")
 
 
 # ======================================================
@@ -1186,6 +1275,7 @@ _CAPABILITY_LABELS = {
     "cover_letter": "Cover letter",
     "interview": "Interview prep",
     "salary": "Salary read",
+    "learning": "Learning roadmap",
 }
 
 
@@ -1295,6 +1385,7 @@ def run_dashboard() -> None:
     with analytics_tab:
         _render_pipeline()
         _render_analytics()
+        _render_learning()
 
     with run_tab:
         _render_run_tab()

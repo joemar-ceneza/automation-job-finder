@@ -86,6 +86,17 @@ dashboard's **Analytics** tab. Response rate counts only *resolved*
 applications (a reply, a rejection, or a long enough silence to count as
 ghosted), so a fresh batch you're still waiting on doesn't flatter or drag it.
 
+See what to learn next — your biggest gaps, in prerequisite order:
+```
+python main.py --learn                     # --learn-limit N to plan for more
+python main.py --learn --ai                # + a week-by-week roadmap and project ideas
+```
+Ranked by demand across your own corpus, with foundations pulled in ahead of
+what needs them (Docker lands before Kubernetes whether or not you asked for
+Docker), an hours estimate, and curated official links. AI mode writes the prose
+around the plan — it is never allowed to supply links of its own, since a model
+asked for course URLs produces plausible ones that 404.
+
 See which in-demand skills your ads ask for but you don't track yet:
 ```
 python main.py --propose-skills            # report; --min-occurrences N to tune
@@ -301,6 +312,9 @@ automation-job-finder/
 ├── cover_letter.py        # Template cover letters (--cover-letter)
 ├── documents.py           # Export resumes/letters to DOCX / PDF / Markdown
 ├── analytics.py           # Application funnel, conversion/response rates (--analytics)
+├── learning_map.py        # Curated difficulty/hours/prereqs/links per skill
+├── learning.py            # Study plan: demand-ranked, prerequisite-ordered (--learn)
+├── ai_learning.py         # AI roadmap around the plan (--learn --ai), no invented links
 ├── app_settings.py        # Per-feature AI mode (config.MODES) + the cost meter
 ├── llm.py                 # AI transport layer: provider protocol, cache, factory
 ├── llm_providers.py       # Claude + OpenAI-compatible provider adapters

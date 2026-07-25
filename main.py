@@ -21,6 +21,7 @@ from logging.handlers import RotatingFileHandler
 import ai_cover_letter
 import ai_explain
 import ai_interview
+import ai_learning
 import ai_rewrite
 import ai_salary
 import ai_summary
@@ -34,6 +35,7 @@ import documents
 import email_handler
 import explain
 import interview
+import learning
 import llm
 import matcher
 import optimizer
@@ -159,6 +161,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--analytics", action="store_true",
                         help="Show your application funnel, conversion and "
                              "response rates, and weekly volume, then exit")
+    parser.add_argument("--learn", action="store_true",
+                        help="Recommend what to learn next from your corpus's "
+                             "skill demand, in prerequisite order, then exit")
+    parser.add_argument("--learn-limit", type=int, default=5,
+                        help="How many missing skills --learn should target "
+                             "(default 5)")
     parser.add_argument("--propose-skills", action="store_true",
                         help="Suggest in-demand skills your corpus asks for but "
                              "you don't track yet, then exit")
@@ -208,7 +216,7 @@ def _parse_args() -> argparse.Namespace:
                         or args.cover_letter or args.compare or args.explain
                         or args.interview or args.summary or args.salary
                         or args.rewrite or args.ai_usage or args.propose_skills
-                        or args.analytics or args.list_resumes
+                        or args.analytics or args.learn or args.list_resumes
                         or args.set_default_resume
                         or (args.prune_days is not None and not args.keyword))
     if not maintenance_only and (not args.resume_pdf or not args.keyword):
@@ -582,6 +590,52 @@ def _run_salary(args: argparse.Namespace) -> None:
         logging.info("  Vs seniority: %s", reading.seniority_read)
 
 
+def _run_learn(args: argparse.Namespace) -> None:
+    """Recommends what to learn next, in prerequisite order."""
+    db_handler.init_db()
+    reference = resumes.resolve(args.resume)
+    if reference is None:
+        return
+    resume = reference.load()
+    logging.info("Using resume '%s'.", reference.name)
+
+    demand_rows = db_handler.skill_demand(limit=200)
+    if not demand_rows:
+        logging.warning("No skill demand recorded yet. Run a search (or "
+                        "--rescore) to populate it.")
+        return
+
+    result = learning.plan(resume.full_text(), demand_rows,
+                           limit=args.learn_limit)
+    logging.info("=" * 70)
+    logging.info("What to learn next")
+    logging.info("=" * 70)
+    for line in result.lines:
+        logging.info("  %s", line)
+
+    if not _use_ai(args, "learning"):
+        return
+
+    provider = llm.get_provider(db_handler)
+    roadmap = ai_learning.enrich(
+        result, resume.listed_skills(), provider, effort=config.AI_EFFORT)
+    if not roadmap.ai_used:
+        logging.info("AI roadmap unavailable%s — the plan above stands.",
+                     f" ({roadmap.note})" if roadmap.note else "")
+        return
+
+    logging.info("")
+    logging.info("AI roadmap (%s%s):", roadmap.model,
+                 ", cached" if roadmap.from_cache else "")
+    logging.info("  %s", roadmap.roadmap)
+    for week in roadmap.weekly_plan:
+        logging.info("    %s", week)
+    if roadmap.projects:
+        logging.info("  Project ideas:")
+        for project in roadmap.projects:
+            logging.info("    • %s", project)
+
+
 def _run_analytics() -> None:
     """Prints the application pipeline: funnel, rates, and weekly volume."""
     db_handler.init_db()
@@ -850,6 +904,9 @@ def main() -> None:
         return
     if args.analytics:
         _run_analytics()
+        return
+    if args.learn:
+        _run_learn(args)
         return
     if args.compare:
         _run_compare(args)

@@ -156,6 +156,7 @@ MODES = {
     "cover_letter": "standard",
     "interview": "standard",
     "salary": "standard",
+    "learning": "standard",
 }
 
 # Rough list prices (USD per 1M tokens) as (input, output), for the cost meter.
