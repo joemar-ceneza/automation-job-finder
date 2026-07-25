@@ -177,6 +177,28 @@ AI_PRICES = {
 }
 
 # ======================================================
+# NOTIFICATIONS
+# ======================================================
+# Notifications are off until you name a channel. The quiet rules below are not
+# optional decoration: a job alert that fires on everything is one you learn to
+# ignore, at which point it is worse than nothing.
+#
+# Channels: "desktop" (Windows toast, needs `pip install win11toast`) and
+# "email" (reuses the Gmail digest credentials in .env).
+NOTIFY_CHANNELS: list[str] = []
+
+# Only tell me about jobs at least this good. Your corpus's top jobs land near
+# 80-95 on the calibrated scale, so this is a "worth opening" bar, not a ceiling.
+NOTIFY_MIN_SCORE = 25.0
+
+# Never announce more than this in one run — the rest wait for the next one.
+# Fifteen new matches at once is a list to read, not a notification.
+NOTIFY_MAX_PER_RUN = 5
+
+# No notifications between these hours (24h, local). Start > end wraps midnight.
+NOTIFY_QUIET_HOURS = (22, 7)
+
+# ======================================================
 # RETRY
 # ======================================================
 RETRY_ATTEMPTS = 3

@@ -41,6 +41,7 @@ import interview
 import learning
 import llm
 import matcher
+import notifications
 import optimizer
 import portfolio
 import resume_model
@@ -168,6 +169,9 @@ def _parse_args() -> argparse.Namespace:
                              "capability whose default mode is 'ai'")
     parser.add_argument("--ai-usage", action="store_true",
                         help="Show total AI token usage, then exit")
+    parser.add_argument("--notify", action="store_true",
+                        help="Announce new jobs worth a look over the "
+                             "configured channels, then exit")
     parser.add_argument("--analytics", action="store_true",
                         help="Show your application funnel, conversion and "
                              "response rates, and weekly volume, then exit")
@@ -227,7 +231,8 @@ def _parse_args() -> argparse.Namespace:
                         or args.interview or args.summary or args.salary
                         or args.portfolio or args.company
                         or args.rewrite or args.ai_usage or args.propose_skills
-                        or args.analytics or args.learn or args.list_resumes
+                        or args.analytics or args.learn or args.notify
+                        or args.list_resumes
                         or args.set_default_resume
                         or (args.prune_days is not None and not args.keyword))
     if not maintenance_only and (not args.resume_pdf or not args.keyword):
@@ -733,6 +738,44 @@ def _run_learn(args: argparse.Namespace) -> None:
             logging.info("    • %s", project)
 
 
+def _notify_about(rows: list[dict]) -> None:
+    """
+    Applies the quiet rules to some jobs and announces what survives. Shared by
+    --notify and the end of a scrape, so both obey exactly the same rules.
+
+    A job is only recorded as announced when a channel actually accepted it —
+    a failed send must not silence a job forever.
+    """
+    keys = [row.get("job_key", "") for row in rows if row.get("job_key")]
+    plan = notifications.select(rows, seen=db_handler.already_notified(keys))
+    for line in plan.lines:
+        logging.info("  %s", line)
+
+    if not plan.has_anything:
+        return
+    if not config.NOTIFY_CHANNELS:
+        logging.info("  No channels configured — set NOTIFY_CHANNELS in "
+                     "config.py to be told about these automatically.")
+        return
+
+    delivered = notifications.send(plan)
+    if delivered:
+        db_handler.mark_notified([job["job_key"] for job in plan.selected])
+        logging.info("  Notified via %s.", ", ".join(delivered))
+    else:
+        logging.warning("  No channel accepted the notification — these jobs "
+                        "will be offered again next run.")
+
+
+def _run_notify() -> None:
+    """Announces new jobs worth a look, over the configured channels."""
+    db_handler.init_db()
+    logging.info("=" * 70)
+    logging.info("Notifications")
+    logging.info("=" * 70)
+    _notify_about(db_handler.fetch_all_jobs())
+
+
 def _run_analytics() -> None:
     """Prints the application pipeline: funnel, rates, and weekly volume."""
     db_handler.init_db()
@@ -1005,6 +1048,9 @@ def main() -> None:
     if args.propose_skills:
         _run_propose_skills(args)
         return
+    if args.notify:
+        _run_notify()
+        return
     if args.analytics:
         _run_analytics()
         return
@@ -1158,6 +1204,14 @@ def main() -> None:
         _log_step(7, "Sending email digest")
         digest_rows = [row for row in combined if row["new_this_run"] == "yes"]
         email_handler.run_email_digest(digest_rows)
+
+    # Step 8: Notify about the new jobs actually worth interrupting you for.
+    # Runs on every scrape once a channel is configured — a scheduled run is
+    # exactly when you are not watching the terminal.
+    if config.NOTIFY_CHANNELS:
+        _log_step(8, "Checking what is worth notifying you about")
+        _notify_about([row for row in combined
+                       if row["new_this_run"] == "yes"])
 
     logging.info("Done. Top matches:")
     for row in combined[:10]:

@@ -36,6 +36,7 @@ import explain
 import interview
 import learning
 import llm
+import notifications
 import optimizer
 import portfolio
 import resume_model
@@ -1476,6 +1477,41 @@ _CAPABILITY_LABELS = {
 }
 
 
+def _render_notification_settings() -> None:
+    """The quiet rules, and a way to see what they'd announce right now."""
+    st.subheader("Notifications")
+    start, end = config.NOTIFY_QUIET_HOURS
+    channels = ", ".join(config.NOTIFY_CHANNELS) or "none"
+    st.caption(f"Channels: **{channels}** · only jobs at "
+               f"**{config.NOTIFY_MIN_SCORE:.0f}%+** · at most "
+               f"**{config.NOTIFY_MAX_PER_RUN}** per run · quiet between "
+               f"**{start}:00 and {end}:00**. Edit these in `config.py`; a job "
+               "you've been told about is never announced twice.")
+
+    if st.button("Show what would be sent now", key="notify_preview"):
+        jobs = db_handler.fetch_all_jobs()
+        keys = [job.get("job_key", "") for job in jobs if job.get("job_key")]
+        plan = notifications.select(
+            jobs, seen=db_handler.already_notified(keys))
+        if plan.quiet:
+            st.info("Quiet hours — nothing would be sent right now.")
+        elif not plan.has_anything:
+            st.info("Nothing new worth announcing.")
+        else:
+            st.success(f"{len(plan.selected)} job(s) would be announced:")
+            for job in plan.selected:
+                st.markdown(f"- **{job.get('score_percent') or 0}%** — "
+                            f"{job.get('title', '')} @ "
+                            f"{job.get('company') or 'unknown'}")
+        if plan.suppressed:
+            st.caption("Held back: " + ", ".join(
+                f"{count} {reason}"
+                for reason, count in sorted(plan.suppressed.items())))
+        if not config.NOTIFY_CHANNELS:
+            st.caption("This is a preview — no channel is configured, so "
+                       "nothing was sent and nothing was marked as announced.")
+
+
 def _render_settings() -> None:
     """Provider status, per-capability default mode, and the cost meter."""
     provider = llm.get_provider(db_handler)
@@ -1505,6 +1541,8 @@ def _render_settings() -> None:
         if choice != current:
             app_settings.set_mode(capability, choice)
             st.rerun()
+
+    _render_notification_settings()
 
     st.subheader("Cost meter")
     columns = st.columns(3)

@@ -86,6 +86,21 @@ dashboard's **Analytics** tab. Response rate counts only *resolved*
 applications (a reply, a rejection, or a long enough silence to count as
 ghosted), so a fresh batch you're still waiting on doesn't flatter or drag it.
 
+Be told about new jobs worth opening, without being spammed:
+```
+python main.py --notify
+```
+Off until you set `NOTIFY_CHANNELS` in `config.py` to `["desktop"]`, `["email"]`,
+or both. Once set it also runs automatically at the end of every search, which
+is the point — a scheduled run is exactly when you aren't watching the terminal.
+
+Four quiet rules apply before anything is sent, and each can veto: only jobs at
+`NOTIFY_MIN_SCORE`+ (default 25%), never the same job twice, at most
+`NOTIFY_MAX_PER_RUN` (default 5) per run, and nothing during
+`NOTIFY_QUIET_HOURS` (default 22:00–07:00). Everything held back is reported
+with its reason. Desktop toasts need `pip install win11toast`; without it that
+channel says so once and email still works.
+
 See what to learn next — your biggest gaps, in prerequisite order:
 ```
 python main.py --learn                     # --learn-limit N to plan for more
@@ -307,6 +322,7 @@ automation-job-finder/
 ├── matcher.py             # Weighted scoring, salary/years extraction, CSV + HTML export
 ├── db_handler.py          # SQLite persistence, status tracking, prune/rescore
 ├── email_handler.py       # Gmail SMTP digest of new matches
+├── notifications.py       # Quiet rules + desktop/email channels (--notify)
 ├── resume_model.py        # Structured master-resume model (parse/serialise Markdown)
 ├── resumes.py             # Registry of resume variants in resumes/
 ├── optimizer.py           # Deterministic resume tailoring + ATS scoring (--tailor)

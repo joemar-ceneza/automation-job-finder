@@ -84,6 +84,16 @@ CREATE TABLE IF NOT EXISTS ai_cache (
 )
 """
 
+# One row per job you have already been told about. The whole point of a
+# notification is that it is new, so this is what stops the same job being
+# announced on every run.
+_NOTIFICATIONS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS notifications (
+    job_key TEXT PRIMARY KEY,
+    sent_at TEXT NOT NULL
+)
+"""
+
 _INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_job_skills_skill ON job_skills(skill)",
     "CREATE INDEX IF NOT EXISTS idx_job_skills_cat   ON job_skills(category)",
@@ -175,6 +185,7 @@ def init_db() -> None:
         connection.execute(_JOB_SKILLS_SCHEMA)
         connection.execute(_EVENTS_SCHEMA)
         connection.execute(_AI_CACHE_SCHEMA)
+        connection.execute(_NOTIFICATIONS_SCHEMA)
         for statement in _INDEXES:
             connection.execute(statement)
 
@@ -426,6 +437,29 @@ def all_stage_events() -> list[dict]:
             "SELECT job_key, stage, occurred_at FROM application_events "
             "ORDER BY occurred_at, id").fetchall()
     return [dict(row) for row in rows]
+
+
+def already_notified(job_keys: list[str]) -> set[str]:
+    """Which of these jobs you have already been told about."""
+    if not job_keys:
+        return set()
+    placeholders = ",".join("?" for _ in job_keys)
+    with closing(_connect()) as connection:
+        rows = connection.execute(
+            f"SELECT job_key FROM notifications WHERE job_key IN ({placeholders})",
+            job_keys).fetchall()
+    return {row["job_key"] for row in rows}
+
+
+def mark_notified(job_keys: list[str]) -> None:
+    """Records that these jobs have been announced, so they never repeat."""
+    if not job_keys:
+        return
+    now = _now()
+    with closing(_connect()) as connection, connection:
+        connection.executemany(
+            "INSERT OR REPLACE INTO notifications (job_key, sent_at) "
+            "VALUES (?, ?)", [(key, now) for key in job_keys])
 
 
 def jobs_by_company(company: str) -> list[dict]:
