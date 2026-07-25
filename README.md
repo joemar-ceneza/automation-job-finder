@@ -77,6 +77,15 @@ Archive listings that have vanished from search results for 30+ days:
 python main.py --prune-days 30
 ```
 
+See your application funnel, conversion and response rates, and weekly volume:
+```
+python main.py --analytics
+```
+Built from your recorded stage history — the same data also drives the
+dashboard's **Analytics** tab. Response rate counts only *resolved*
+applications (a reply, a rejection, or a long enough silence to count as
+ghosted), so a fresh batch you're still waiting on doesn't flatter or drag it.
+
 See which in-demand skills your ads ask for but you don't track yet:
 ```
 python main.py --propose-skills            # report; --min-occurrences N to tune
@@ -289,6 +298,7 @@ automation-job-finder/
 ├── summary.py             # Deterministic job summary + red flags (--summary)
 ├── cover_letter.py        # Template cover letters (--cover-letter)
 ├── documents.py           # Export resumes/letters to DOCX / PDF / Markdown
+├── analytics.py           # Application funnel, conversion/response rates (--analytics)
 ├── app_settings.py        # Per-feature AI mode (config.MODES) + the cost meter
 ├── llm.py                 # AI transport layer: provider protocol, cache, factory
 ├── llm_providers.py       # Claude + OpenAI-compatible provider adapters

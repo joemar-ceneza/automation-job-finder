@@ -23,6 +23,7 @@ import ai_explain
 import ai_interview
 import ai_rewrite
 import ai_summary
+import analytics
 import app_settings
 import config
 import cover_letter
@@ -150,6 +151,9 @@ def _parse_args() -> argparse.Namespace:
                              "capability whose default mode is 'ai'")
     parser.add_argument("--ai-usage", action="store_true",
                         help="Show total AI token usage, then exit")
+    parser.add_argument("--analytics", action="store_true",
+                        help="Show your application funnel, conversion and "
+                             "response rates, and weekly volume, then exit")
     parser.add_argument("--propose-skills", action="store_true",
                         help="Suggest in-demand skills your corpus asks for but "
                              "you don't track yet, then exit")
@@ -199,7 +203,7 @@ def _parse_args() -> argparse.Namespace:
                         or args.cover_letter or args.compare or args.explain
                         or args.interview or args.summary or args.rewrite
                         or args.ai_usage or args.propose_skills
-                        or args.list_resumes
+                        or args.analytics or args.list_resumes
                         or args.set_default_resume
                         or (args.prune_days is not None and not args.keyword))
     if not maintenance_only and (not args.resume_pdf or not args.keyword):
@@ -537,6 +541,23 @@ def _run_propose_skills(args: argparse.Namespace) -> None:
                  "demand tab — it re-extracts your corpus in the same action.")
 
 
+def _run_analytics() -> None:
+    """Prints the application pipeline: funnel, rates, and weekly volume."""
+    db_handler.init_db()
+    funnel = analytics.compute(db_handler.all_stage_events())
+
+    logging.info("=" * 70)
+    logging.info("Application pipeline")
+    logging.info("=" * 70)
+    if funnel.applied == 0:
+        logging.info("No applications tracked yet — set a job's status to "
+                     "'applied' (dashboard, or --set-status) to start building "
+                     "your funnel.")
+        return
+    for line in funnel.lines:
+        logging.info("  %s", line)
+
+
 def _run_ai_usage() -> None:
     """Reports total AI token spend, the cost estimate, and per-capability modes."""
     db_handler.init_db()
@@ -782,6 +803,9 @@ def main() -> None:
         return
     if args.propose_skills:
         _run_propose_skills(args)
+        return
+    if args.analytics:
+        _run_analytics()
         return
     if args.compare:
         _run_compare(args)

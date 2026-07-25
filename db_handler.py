@@ -418,6 +418,16 @@ def stage_history(job_key: str) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def all_stage_events() -> list[dict]:
+    """Every recorded stage change across all jobs, oldest first — the raw
+    material for the pipeline analytics."""
+    with closing(_connect()) as connection:
+        rows = connection.execute(
+            "SELECT job_key, stage, occurred_at FROM application_events "
+            "ORDER BY occurred_at, id").fetchall()
+    return [dict(row) for row in rows]
+
+
 def stalled_jobs() -> list[dict]:
     """
     Jobs awaiting an employer reply for longer than GHOSTED_AFTER_DAYS.

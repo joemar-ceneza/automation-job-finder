@@ -21,6 +21,7 @@ import ai_explain
 import ai_interview
 import ai_rewrite
 import ai_summary
+import analytics
 import app_settings
 import config
 import cover_letter
@@ -264,6 +265,47 @@ def _render_board(frame: pd.DataFrame) -> None:
 # ======================================================
 # ANALYTICS
 # ======================================================
+def _pct(value: float | None) -> str:
+    """A percentage for a metric tile, or an em dash when there's no sample."""
+    return f"{value:.0f}%" if value is not None else "—"
+
+
+def _render_pipeline() -> None:
+    """The application funnel, conversion/response rates, and weekly volume."""
+    funnel = analytics.compute(db_handler.all_stage_events())
+    st.subheader("Application pipeline")
+    if funnel.applied == 0:
+        st.caption("No applications tracked yet. Move a job to **applied** on "
+                   "the Matches tab (or `--set-status`) and your funnel, "
+                   "conversion rates, and weekly volume appear here.")
+        st.divider()
+        return
+
+    stages_row = st.columns(4)
+    stages_row[0].metric("Applied", funnel.applied)
+    stages_row[1].metric("Interviewed", funnel.interviewed)
+    stages_row[2].metric("Offers", funnel.offers)
+    stages_row[3].metric("Accepted", funnel.accepted)
+
+    rates_row = st.columns(4)
+    resolved = funnel.responded + funnel.no_response
+    rates_row[0].metric(
+        "Response rate", _pct(funnel.response_rate),
+        help=f"{funnel.responded} responded of {resolved} resolved · "
+             f"{funnel.pending} still pending (not counted)")
+    rates_row[1].metric("Applied → Interview",
+                        _pct(funnel.applied_to_interview))
+    rates_row[2].metric("Interview → Offer", _pct(funnel.interview_to_offer))
+    rates_row[3].metric("Offer → Accept", _pct(funnel.offer_to_accept))
+
+    if funnel.weekly_applications:
+        st.caption("Applications per week")
+        frame = pd.DataFrame(funnel.weekly_applications,
+                             columns=["week", "applications"]).set_index("week")
+        st.bar_chart(frame, height=200)
+    st.divider()
+
+
 def _render_analytics() -> None:
     """Skill demand across every stored job — no AI involved."""
     total = db_handler.total_active_jobs()
@@ -1168,7 +1210,7 @@ def run_dashboard() -> None:
 
     (matches_tab, detail_tab, board_tab, analytics_tab, run_tab,
      settings_tab) = st.tabs(
-        ["Matches", "Job detail", "Board", "Skill demand", "Run & tools",
+        ["Matches", "Job detail", "Board", "Analytics", "Run & tools",
          "Settings"])
 
     with matches_tab:
@@ -1184,6 +1226,7 @@ def run_dashboard() -> None:
         _render_board(frame)
 
     with analytics_tab:
+        _render_pipeline()
         _render_analytics()
 
     with run_tab:
