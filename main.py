@@ -22,6 +22,7 @@ import ai_cover_letter
 import ai_explain
 import ai_interview
 import ai_rewrite
+import ai_salary
 import ai_summary
 import analytics
 import app_settings
@@ -40,6 +41,7 @@ import resume_model
 import resume_import
 import resume_parser
 import resumes
+import salary_bands
 import scraper_common
 import scraper_jobstreet
 import scraper_onlinejobs
@@ -142,6 +144,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--summary", metavar="JOB",
                         help="Summarise a job — sections and red flags — then "
                              "exit")
+    parser.add_argument("--salary", metavar="JOB",
+                        help="Band a job's pay against similar roles you've "
+                             "tracked, with yearly/hourly figures, then exit")
     parser.add_argument("--ai", action="store_true",
                         help="Force AI enrichment on for --explain, "
                              "--cover-letter, --interview or --summary (falls "
@@ -201,8 +206,8 @@ def _parse_args() -> argparse.Namespace:
                         or args.backup or args.calibrate or args.stalled
                         or args.import_resume or args.tailor
                         or args.cover_letter or args.compare or args.explain
-                        or args.interview or args.summary or args.rewrite
-                        or args.ai_usage or args.propose_skills
+                        or args.interview or args.summary or args.salary
+                        or args.rewrite or args.ai_usage or args.propose_skills
                         or args.analytics or args.list_resumes
                         or args.set_default_resume
                         or (args.prune_days is not None and not args.keyword))
@@ -541,6 +546,42 @@ def _run_propose_skills(args: argparse.Namespace) -> None:
                  "demand tab — it re-extracts your corpus in the same action.")
 
 
+def _run_salary(args: argparse.Namespace) -> None:
+    """Bands one job's pay against similar roles, optionally with an AI read."""
+    db_handler.init_db()
+    job = db_handler.get_job(args.salary)
+    if job is None:
+        logging.error("No job matching '%s' in the database.", args.salary)
+        return
+    corpus = db_handler.salaried_jobs(job.get("search_keyword") or None)
+    assessment = salary_bands.assess(job, corpus)
+
+    logging.info("=" * 70)
+    logging.info("Salary — %s @ %s", job.get("title", ""),
+                 job.get("company") or "?")
+    logging.info("=" * 70)
+    for line in assessment.lines:
+        logging.info("  %s", line.replace("**", ""))   # plain text for the log
+
+    if not _use_ai(args, "salary"):
+        return
+
+    provider = llm.get_provider(db_handler)
+    reading = ai_salary.enrich(job, assessment, provider,
+                               effort=config.AI_EFFORT)
+    if not reading.ai_used:
+        logging.info("AI salary read unavailable%s — the band above stands.",
+                     f" ({reading.note})" if reading.note else "")
+        return
+    logging.info("AI read (%s%s):", reading.model,
+                 ", cached" if reading.from_cache else "")
+    logging.info("  %s", reading.competitiveness)
+    if reading.negotiation:
+        logging.info("  Negotiation: %s", reading.negotiation)
+    if reading.seniority_read:
+        logging.info("  Vs seniority: %s", reading.seniority_read)
+
+
 def _run_analytics() -> None:
     """Prints the application pipeline: funnel, rates, and weekly volume."""
     db_handler.init_db()
@@ -797,6 +838,9 @@ def main() -> None:
         return
     if args.summary:
         _run_summary(args)
+        return
+    if args.salary:
+        _run_salary(args)
         return
     if args.ai_usage:
         _run_ai_usage()

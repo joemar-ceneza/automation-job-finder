@@ -21,7 +21,7 @@ import config
 import db_handler
 
 # The capabilities that have both a Standard and an AI implementation.
-CAPABILITIES = ("explain", "summary", "cover_letter", "interview")
+CAPABILITIES = ("explain", "summary", "cover_letter", "interview", "salary")
 _VALID_MODES = ("standard", "ai")
 _META_PREFIX = "mode_"
 

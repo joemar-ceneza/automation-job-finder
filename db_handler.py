@@ -428,6 +428,23 @@ def all_stage_events() -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def salaried_jobs(role: str | None = None) -> list[dict]:
+    """
+    Active jobs that state a monthly salary — the corpus the salary bands
+    compare against. Filtered to one search keyword when given, so a job is
+    banded against roles like itself rather than the whole database.
+    """
+    query = ("SELECT job_key, title, search_keyword, salary_min, salary_max "
+             "FROM jobs WHERE archived = 0 AND salary_min IS NOT NULL")
+    params: tuple = ()
+    if role:
+        query += " AND search_keyword = ?"
+        params = (role,)
+    with closing(_connect()) as connection:
+        rows = connection.execute(query, params).fetchall()
+    return [dict(row) for row in rows]
+
+
 def stalled_jobs() -> list[dict]:
     """
     Jobs awaiting an employer reply for longer than GHOSTED_AFTER_DAYS.

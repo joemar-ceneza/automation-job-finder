@@ -102,6 +102,7 @@ live in the dashboard's **Job detail** tab.
 
 ```
 python main.py --summary JOB         # condense the advert — sections + red flags
+python main.py --salary JOB          # band the pay vs similar roles you track
 python main.py --tailor JOB          # restructure your resume for the job (deterministic)
 python main.py --cover-letter JOB    # draft a cover letter from a template
 python main.py --explain JOB         # why the job scored what it did
@@ -121,6 +122,7 @@ shows a **cost meter** (token spend and an estimate — $0 for local models):
 python main.py --cover-letter JOB --ai   # AI writes the letter body from your resume
 python main.py --interview JOB --ai      # AI drafts a grounded answer for each question
 python main.py --summary JOB --ai        # AI prose read: pros/cons, growth, subtler red flags
+python main.py --salary JOB --ai         # AI competitiveness + negotiation read
 python main.py --rewrite JOB             # tailor AND AI-rewrite the wording (needs a provider)
 python main.py --explain JOB --ai        # AI narrative on top of the deterministic score
 ```
@@ -306,6 +308,8 @@ automation-job-finder/
 ├── ai_cover_letter.py     # AI cover letters (--cover-letter --ai), same verifier
 ├── ai_interview.py        # AI interview answers (--interview --ai), same verifier
 ├── ai_summary.py          # AI job read (--summary --ai): pros/cons, growth, red flags
+├── salary_bands.py        # Deterministic salary banding vs your corpus (--salary)
+├── ai_salary.py           # AI pay read (--salary --ai): competitiveness, negotiation
 ├── ai_explain.py          # AI score narrative grounded in the deterministic facts
 ├── skill_extractor.py     # Canonical skill matching into job_skills (+ approved extras)
 ├── skill_lexicon.py       # Curated candidate skills for --propose-skills

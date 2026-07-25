@@ -20,6 +20,7 @@ import ai_cover_letter
 import ai_explain
 import ai_interview
 import ai_rewrite
+import ai_salary
 import ai_summary
 import analytics
 import app_settings
@@ -34,6 +35,7 @@ import optimizer
 import resume_model
 import resume_parser
 import resumes
+import salary_bands
 import skill_extractor
 import skill_proposals
 import stages
@@ -498,6 +500,70 @@ def _render_summary(job: dict) -> None:
                 "posting via the job title link.")
 
     _render_ai_summary(job, result)
+    _render_salary(job)
+
+
+def _render_salary(job: dict) -> None:
+    """Band this job's pay against similar roles you track, with optional AI."""
+    corpus = db_handler.salaried_jobs(job.get("search_keyword") or None)
+    assessment = salary_bands.assess(job, corpus)
+
+    st.divider()
+    st.markdown("**Salary**")
+    if not assessment.has_salary:
+        st.caption("This advert states no salary.")
+        return
+
+    figures = st.columns(4)
+    figures[0].metric("Monthly", f"₱{assessment.monthly:,}")
+    figures[1].metric("Yearly", f"₱{assessment.yearly:,}")
+    figures[2].metric("With 13th", f"₱{assessment.yearly_13th:,}")
+    figures[3].metric("Hourly", f"₱{assessment.hourly:,}")
+
+    if assessment.enough_sample:
+        marker = {"Below": "🔻", "Competitive": "➖",
+                  "Above": "🔺"}.get(assessment.band, "")
+        st.markdown(
+            f"{marker} **{assessment.band}** versus {assessment.sample_size} "
+            f"“{assessment.role}” postings you track — median "
+            f"₱{assessment.corpus_median:,}, middle half "
+            f"₱{assessment.p25:,}–₱{assessment.p75:,}.")
+    else:
+        st.caption(f"Only {assessment.sample_size} “{assessment.role}” "
+                   f"posting(s) with a salary tracked — too few to call it "
+                   f"competitive (need {config.SALARY_MIN_SAMPLES}).")
+
+    _render_ai_salary(job, assessment)
+
+
+def _render_ai_salary(job: dict, base) -> None:
+    """Optional AI reading of the pay — competitiveness, negotiation, seniority."""
+    provider = llm.get_provider(db_handler)
+    if not base.has_salary or not provider.is_available():
+        return
+
+    key = f"ai_salary_{job['job_key']}"
+    triggered = st.button("Read the pay with AI", key=f"btn_{key}")
+    if triggered or (key not in st.session_state
+                     and app_settings.mode_for("salary") == "ai"):
+        with st.spinner("Reading the pay…"):
+            st.session_state[key] = ai_salary.enrich(
+                job, base, provider, effort=config.AI_EFFORT)
+
+    result = st.session_state.get(key)
+    if result is None:
+        return
+    if not result.ai_used:
+        if result.note:
+            st.caption(f"AI read unavailable: {result.note}")
+        return
+    st.markdown(f"**AI read** · {result.model}"
+                + (" · cached" if result.from_cache else ""))
+    st.markdown(result.competitiveness)
+    if result.negotiation:
+        st.markdown(f"**Negotiation** — {result.negotiation}")
+    if result.seniority_read:
+        st.markdown(f"**Vs seniority** — {result.seniority_read}")
 
 
 def _render_ai_summary(job: dict, base) -> None:
@@ -1119,6 +1185,7 @@ _CAPABILITY_LABELS = {
     "summary": "Job summary",
     "cover_letter": "Cover letter",
     "interview": "Interview prep",
+    "salary": "Salary read",
 }
 
 

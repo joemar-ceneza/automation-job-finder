@@ -155,6 +155,7 @@ MODES = {
     "summary": "standard",
     "cover_letter": "standard",
     "interview": "standard",
+    "salary": "standard",
 }
 
 # Rough list prices (USD per 1M tokens) as (input, output), for the cost meter.
@@ -222,6 +223,11 @@ SCORE_SCALE_VERSION = 2
 # Below this many stored jobs, --calibrate refuses to suggest a value —
 # a percentile drawn from a handful of rows is noise dressed as a statistic.
 CALIBRATION_MIN_JOBS = 150
+
+# Fewest salaried postings for a role before the salary comparison is shown.
+# Most PH ads state no salary, so the sample is always smaller than the job
+# count; below this it is a guess, not a benchmark.
+SALARY_MIN_SAMPLES = 30
 
 # A stored description longer than this came from a detail page rather than a
 # search card, so --calibrate can report how much of the corpus was scored on
