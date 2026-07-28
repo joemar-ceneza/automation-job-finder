@@ -3,6 +3,31 @@
 Design document for evolving `automation-job-finder` from a two-site scraper into a
 local-first job search assistant.
 
+> ## Status: built — features 1–17 and 19 are shipped
+>
+> This was written as a plan, and it reads in the future tense throughout
+> ("build", "add", the day estimates). **Every feature it specifies now exists**
+> — phases 0–4 are complete, 411 tests pass. Read the imperatives as a record of
+> what was decided and why, not as work outstanding.
+>
+> **The one item not built is §8 feature 18 — the module restructure.** The tree
+> in [§4](#4-project-structure) is its specification; the code is still flat at
+> the repository root. That is the only place where this document describes
+> something the code does not do.
+>
+> Departures from the plan as written, all deliberate:
+>
+> | Planned | Built | Why |
+> |---|---|---|
+> | `data/portfolio.yaml`, `data/questions.yaml` | `data/portfolio.toml`; interview bank in `interview.py` | PyYAML is a new dependency; `tomllib` is stdlib on 3.11+ |
+> | Gemini adapter (§2.3) | not built | listed as "add only if actually wanted" — it wasn't |
+> | `pydantic` schemas (§5.3) | `dataclass` equivalents | no new dependency needed for local validation |
+> | Master resume from PDF import | as planned | `resume_import.py`, then Markdown is the source of truth |
+>
+> **This file is the reasoning; [`../README.md`](../README.md) is the usage.**
+> Anything here about *why* a thing is the way it is — the score scale, the cut
+> features, the sample-size gates, the security posture — is not repeated there.
+
 **Organising principle: every feature works completely without AI.**
 Standard mode is the product. AI mode is an enrichment layer that can be absent,
 misconfigured, or switched off per feature without degrading anything.
@@ -12,7 +37,7 @@ misconfigured, or switched off per feature without degrading anything.
 | Target | Python 3.11+ (running 3.13 today) |
 | Stack | Playwright · SQLite · Streamlit |
 | Modes | Standard (free, offline, deterministic) + AI (optional) |
-| Estimate | ~63 working days, ~12 weeks part-time |
+| Estimate | ~63 working days, ~12 weeks part-time *(as estimated; now complete)* |
 
 ---
 
@@ -20,6 +45,13 @@ misconfigured, or switched off per feature without degrading anything.
 
 Four defects in the current code that will distort the new features. None takes
 more than a day.
+
+> **All four are fixed.** The score scale is calibrated with `TARGET_MATCH_SKILLS`
+> and `--calibrate`, the aliases are realigned (and feature 16 now proposes
+> additions rather than letting them drift), `--backup` exists and runs before
+> migrations, and 3.11 is the floor. Kept because the *reasoning* — especially
+> §1.1 on why a low median is not a bug to tune away — is what stops the scale
+> being "fixed" again by someone who hasn't read it.
 
 ### 1.1 The score scale is unreachable
 
@@ -994,6 +1026,10 @@ narrative around it.
 ---
 
 ## 9. Roadmap
+
+> **Phases 0–4 are complete**, with one exception: the `git mv` module
+> restructure in Phase 0 (feature 18) was deferred and is still outstanding.
+> Everything else below shipped.
 
 ### Phase 0 — Foundations · 6 days
 No new features. Make the existing tool correct and give it a shape that can

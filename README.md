@@ -1,20 +1,33 @@
 # Resume-to-Job Matcher (JobStreet PH, OnlineJobs.ph)
 
 ## What This Does
-Scrapes job listings from **JobStreet PH** and **OnlineJobs.ph**,
-scores them against your resume's skills using weighted
-keyword matching (skills in the job title count more than skills in the
-description), and saves results to a local SQLite database plus a ranked
-CSV and HTML report. Jobs are deduplicated and tracked across runs, and a
-local **Streamlit dashboard** lets you browse, filter, and record which
-jobs you applied to with a click — making it a lightweight job-search
-tracker, not just a scraper. It can also email you a digest of new matches.
+A local-first job search assistant. It scrapes **JobStreet PH** and
+**OnlineJobs.ph**, scores each listing against your resume's skills using
+weighted keyword matching (skills in the job title count more than skills in the
+description), and stores everything in a local SQLite database plus a ranked CSV
+and HTML report. Jobs are deduplicated and tracked across runs.
+
+From there it helps you actually apply: summarise an advert and flag its risks,
+explain why a job scored what it did, band its salary against the roles you've
+tracked, tailor your resume, draft a cover letter, prepare for the interview,
+pick which portfolio project to show, and track every application through a
+twelve-stage pipeline with funnel analytics. A local **Streamlit dashboard**
+does everything the terminal does; it can also email you a digest or send a
+desktop notification when something worth opening appears.
+
+**Every feature works completely without AI.** Standard mode is the product —
+free, offline, deterministic, and no API key. AI mode is an optional layer that
+adds prose on top of facts the deterministic code already computed; if no
+provider is configured, or a call fails, each feature falls back to its Standard
+result and says so.
 
 ## Requirements
-- Python 3.10+
+- Python 3.11+ — `tomllib` and `StrEnum` are used and are 3.11 stdlib
 - Windows OS (works elsewhere too)
 - No credentials needed for scraping — only public pages are read
 - Optional: a Gmail account with an App Password, only for the `--email` digest
+- Optional: an AI provider (a local model via Ollama / LM Studio, or an
+  Anthropic key) — every feature works fully without one
 
 ## Setup
 1. Clone or download this project
@@ -170,9 +183,13 @@ The pipeline:
    deduplicating reposted listings by site-prefixed job id
    (fallback: normalized title+company)
 3. Checks `output/jobs.db` and scores only jobs not seen in previous runs
-4. Saves everything to SQLite and exports a ranked CSV + `output/report.html`
+4. Extracts canonical skills from every new advert into `job_skills`,
+   which is what the demand analytics and `--learn` are built from
+5. Flags cross-site duplicates — the same role posted to both sites
+6. Saves everything to SQLite and exports a ranked CSV + `output/report.html`
    — new listings are flagged `new_this_run = yes`
-5. With `--email`, sends a Gmail digest of the new matches
+7. With `--email`, sends a Gmail digest of the new matches
+8. Notifies you about anything worth opening, if a channel is configured
 
 ## Job sites
 
@@ -183,26 +200,99 @@ The pipeline:
 
 ## Options
 
+`python main.py --help` is always authoritative. Flags marked **exits** are
+standalone commands — they do their one job and stop, no scrape and no resume
+PDF required.
+
+### Searching
+
 | Flag           | Default                  | Description                                        |
 |----------------|--------------------------|----------------------------------------------------|
 | `--site`       | both                     | Comma-separated sites: `jobstreet`, `onlinejobs`  |
-| `--generate-skills` | —                   | Draft `skills_draft.txt` from your resume PDF, then exit |
 | `--skills`     | `skills.txt`             | Path to your skills keyword file                   |
 | `--pages`      | `2`                      | Search-result pages to scrape per keyword          |
 | `--delay`      | `3.0`                    | Seconds between page requests (also rate-limits detail pages) |
 | `--location`   | off                      | Limit results to a location, e.g. `"Metro Manila"` (JobStreet only; OnlineJobs is remote-only) |
 | `--full-desc`  | off                      | Visit each job's detail page for the full description (slower, more accurate scoring) |
+| `--debug`      | off                      | Run browser visibly, save page HTML for every page |
+
+### Filtering what gets exported
+
+| Flag           | Default                  | Description                                        |
+|----------------|--------------------------|----------------------------------------------------|
 | `--max-years`  | off                      | Your years of experience — jobs requiring more are filtered out |
-| `--min-score`  | off                      | Exclude jobs scoring below this percentage from exports |
+| `--min-score`  | off                      | Exclude jobs scoring below this percentage         |
 | `--min-salary` | off                      | Exclude jobs whose stated max monthly salary (PHP) is below this; jobs with no stated salary are kept |
 | `--only-new`   | off                      | Export only jobs not seen in previous runs         |
-| `--rescore`    | off                      | Re-score all stored jobs against the current skill list |
-| `--prune-days` | off                      | Archive jobs not seen in N days (standalone or during a run) |
-| `--set-status` | —                        | `--set-status <job_key or URL> <status>` records e.g. applied/interested/rejected, then exits (any site's job URL works) |
-| `--email`      | off                      | Email a digest of new matches via Gmail SMTP (needs `.env`) |
-| `--debug`      | off                      | Run browser visibly, save page HTML for every page |
 | `--out`        | `output/ranked_jobs.csv` | Output CSV path                                    |
 | `--html`       | `output/report.html`     | Output HTML report path                            |
+| `--email`      | off                      | Email a digest of new matches via Gmail SMTP (needs `.env`) |
+
+### Working a job — `JOB` is a `job_key` or the listing URL
+
+Each of these **exits** when done, and each has an `--ai` variant.
+
+| Flag             | Description                                        |
+|------------------|----------------------------------------------------|
+| `--summary JOB`  | Condense the advert — sections and red flags       |
+| `--explain JOB`  | Why the job scored what it did                     |
+| `--salary JOB`   | Band the pay against similar roles you track       |
+| `--portfolio JOB`| Rank your projects — which to show, what to lead with |
+| `--interview JOB`| Likely questions and talking points from your resume |
+| `--tailor JOB`   | Restructure your master resume for the job and export it |
+| `--cover-letter JOB` | Draft a cover letter                           |
+| `--rewrite JOB`  | Tailor **and** AI-rewrite the wording (needs a provider) |
+| `--compare JOB`  | Rank every resume in `resumes/` against the job    |
+| `--company NAME` | What your corpus knows about an employer           |
+
+### Tracking applications
+
+| Flag           | Default | Description                                        |
+|----------------|---------|----------------------------------------------------|
+| `--set-status` | —       | `--set-status <JOB> <stage>` moves a job, then **exits**. Stages: saved, interested, applied, phone/technical/hr/final interview, offer, accepted, rejected, ghosted, withdrawn. Illegal transitions are refused. |
+| `--note`       | —       | Note to attach to a `--set-status` change          |
+| `--stalled`    | off     | **Exits.** List applications with no reply in 21+ days |
+| `--analytics`  | off     | **Exits.** Funnel, conversion and response rates, weekly volume |
+
+### Resumes and skills
+
+| Flag                   | Default | Description                                |
+|------------------------|---------|--------------------------------------------|
+| `--generate-skills`    | —       | **Exits.** Draft `skills_draft.txt` from your resume PDF |
+| `--import-resume`      | —       | **Exits.** Convert your resume PDF into an editable `master_resume.md` |
+| `--resume NAME`        | default | Which resume variant to use                |
+| `--list-resumes`       | off     | **Exits.** List the resumes you maintain   |
+| `--set-default-resume` | —       | **Exits.** Choose the resume used when `--resume` is omitted |
+| `--propose-skills`     | off     | **Exits.** Suggest in-demand skills you don't track yet |
+| `--min-occurrences`    | `3`     | Minimum jobs a skill must appear in to be proposed |
+| `--learn`              | off     | **Exits.** What to learn next, in prerequisite order |
+| `--learn-limit`        | `5`     | How many missing skills `--learn` should target |
+
+### Documents
+
+| Flag          | Default        | Description                                |
+|---------------|----------------|--------------------------------------------|
+| `--tone`      | `direct`       | Cover letter tone: direct, warm, technical |
+| `--recipient` | Hiring Manager | Name the letter is addressed to            |
+| `--formats`   | `md,docx,pdf`  | Formats for `--tailor`                     |
+
+### AI mode
+
+| Flag         | Default | Description                                        |
+|--------------|---------|----------------------------------------------------|
+| `--ai`       | off     | Force AI enrichment on for this run (falls back to Standard if unavailable) |
+| `--no-ai`    | off     | Force AI off, overriding a capability whose default mode is `ai` |
+| `--ai-usage` | off     | **Exits.** Total token usage and estimated spend   |
+
+### Maintenance
+
+| Flag           | Default | Description                                        |
+|----------------|---------|----------------------------------------------------|
+| `--backup`     | off     | **Exits.** Copy the database to `output/backups/`  |
+| `--calibrate`  | off     | **Exits.** Suggest a `TARGET_MATCH_SKILLS` value from your stored jobs |
+| `--rescore`    | off     | Re-score all stored jobs against the current skill list |
+| `--prune-days` | off     | Archive jobs not seen in N days (standalone or during a run) |
+| `--notify`     | off     | **Exits.** Announce new jobs worth a look over the configured channels |
 
 ## How scoring works
 - A skill found in the **job title** counts ×3; a skill found only in the
@@ -233,10 +323,12 @@ The pipeline:
 streamlit run dashboard.py
 ```
 Opens a local web page (nothing is hosted online) showing every stored job
-with search, status/site filters, minimum score/salary sliders, and headline
-counts. Change any row's **Status** dropdown (new / interested / applied /
-rejected / no answer) and click **Save status changes** — it writes straight
-to `output/jobs.db`. Job titles link to the original posting.
+with search, stage/site filters, minimum score/salary sliders, and headline
+counts. Change any row's **Stage** dropdown and click **Save status changes** —
+it writes straight to `output/jobs.db`. Job titles link to the original posting.
+
+Six tabs: **Matches**, **Job detail**, **Board**, **Analytics**, **Run & tools**,
+and **Settings**.
 
 **Everything the terminal does, the dashboard does too.** The **Run & tools**
 tab runs the full search pipeline (keywords, location, sites, pages, filters,
@@ -255,9 +347,15 @@ mode per feature and shows the cost meter.
   `status`, and `first_seen`/`last_seen` timestamps.
 - Already-seen jobs are not re-scored; their stored score appears in the
   CSV with `new_this_run = no`.
-- **Status tracking**: every job starts as `new`. Use `--set-status` to
-  record `interested`, `applied`, `rejected`, or anything else — it shows
-  in the CSV/HTML `status` column on every future run.
+- **Stage tracking**: every job starts at `saved`, and `--set-status` (or the
+  Board tab) moves it through a twelve-stage lifecycle — interested, applied,
+  the four interview rounds, offer, accepted, rejected, ghosted, withdrawn.
+  Transitions are validated, so a rejected job can't quietly become an offer.
+  Every move is stored with its timestamp and optional note in
+  `application_events`, which is what makes `--analytics` trustworthy.
+- **Ghosting is inferred, not typed.** Nobody remembers to record a silence, so
+  anything awaiting a reply for 21+ days is surfaced by `--stalled` and on the
+  Board as a one-click suggestion.
 - **Skill list changes**: the pipeline stores a fingerprint of your matched
   skills. If it changes, you'll get a warning that stored scores are stale —
   run once with `--rescore` to refresh them (uses stored descriptions; no
@@ -319,10 +417,13 @@ automation-job-finder/
 ├── scraper_common.py      # Shared scraper pieces (JobListing, keys, dates)
 ├── scraper_jobstreet.py   # JobStreet PH scraper
 ├── scraper_onlinejobs.py  # OnlineJobs.ph scraper
+├── dedupe.py              # Cross-site duplicate flagging
 ├── matcher.py             # Weighted scoring, salary/years extraction, CSV + HTML export
-├── db_handler.py          # SQLite persistence, status tracking, prune/rescore
+├── db_handler.py          # SQLite persistence, stage tracking, prune/rescore
+├── stages.py              # Twelve-stage lifecycle + legal transitions
 ├── email_handler.py       # Gmail SMTP digest of new matches
 ├── notifications.py       # Quiet rules + desktop/email channels (--notify)
+├── resume_import.py       # PDF -> master_resume.md, once (--import-resume)
 ├── resume_model.py        # Structured master-resume model (parse/serialise Markdown)
 ├── resumes.py             # Registry of resume variants in resumes/
 ├── optimizer.py           # Deterministic resume tailoring + ATS scoring (--tailor)
@@ -354,10 +455,38 @@ automation-job-finder/
 ├── skill_proposals.py     # Feature 16: propose in-demand skills you don't track yet
 ├── tracked_skills.py      # Approved skill additions (per-database, reversible)
 ├── skills.txt             # Your customizable skill/keyword list
-├── .env.example           # Template for Gmail credentials (copy to .env)
+├── .env.example           # Template for Gmail + AI provider settings
+├── data/
+│   ├── portfolio.toml     # Your projects and the tech each demonstrates
+│   └── cover_letters/     # direct.txt, warm.txt, technical.txt templates
+├── docs/
+│   └── ARCHITECTURE.md    # Why it's built this way — design rationale
+├── tests/                 # 411 tests, none of which call a real model
+├── resumes/               # Your resume variants (gitignored)
 ├── logs/                  # automation.log, debug HTML, error screenshots
-└── output/                # jobs.db, ranked_jobs.csv, report.html
+└── output/                # jobs.db, backups/, ranked_jobs.csv, report.html
 ```
+
+## Tests
+```
+pytest -q
+```
+411 tests, all offline and all fast. Two rules keep them that way: **no test ever
+calls a real model** — a fake provider returns canned responses and a failing one
+raises, so the degrade-to-Standard path is exercised on every run rather than
+discovered in production — and **scrapers are tested against saved HTML**, so a
+site changing its markup becomes a failing test instead of a silent zero-result
+run at 6am.
+
+## Design notes
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) is the design document — why the
+score scale is calibrated the way it is, why AI mode consumes Standard mode's
+output instead of re-deriving facts, which features were deliberately cut and
+what they'd have cost, plus the security posture and risk register.
+
+Read it before changing scoring, the skill list, or anything AI-facing. It
+records decisions that are cheap to reverse by accident and expensive to
+diagnose afterwards.
 
 ## Logs
 Logs are saved to `logs/automation.log`.
