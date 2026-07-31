@@ -147,6 +147,7 @@ class OpenAICompatibleProvider:
             ],
             "response_format": {"type": "json_object"},
             "max_tokens": request.max_tokens,
+            "stream": False,
         }
         try:
             reply = self._client.post(self._url, json=payload)
