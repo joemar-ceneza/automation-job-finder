@@ -251,7 +251,8 @@ def _fetch_full_descriptions(context, listings: list[JobListing],
 # ======================================================
 def run_scraper(keywords: list[str] | str, max_pages: int = config.DEFAULT_PAGES,
                 delay_seconds: float = config.DEFAULT_DELAY_SECONDS,
-                debug: bool = False, fetch_details: bool = False) -> list[JobListing]:
+                debug: bool = False, fetch_details: bool = False,
+                location: str = "") -> list[JobListing]:
     """
     Scrapes Kalibrr job search results for one or more keywords (all in a
     single browser session), dedupes listings by job_key across keywords,
@@ -260,6 +261,8 @@ def run_scraper(keywords: list[str] | str, max_pages: int = config.DEFAULT_PAGES
 
     Note: Kalibrr uses "Load More" instead of pagination. max_pages is
     repurposed as the number of "Load More" clicks (default: 5).
+    Location parameter is accepted for API compatibility but ignored
+    (Kalibrr doesn't support location filtering).
     """
     if isinstance(keywords, str):
         keywords = [keywords]
