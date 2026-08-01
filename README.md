@@ -197,8 +197,8 @@ The pipeline:
 | `jobstreet` | JobStreet PH. Supports `--location` and `--full-desc`. |
 | `onlinejobs` | OnlineJobs.ph (remote jobs for PH workers). All listings are work-from-home; salaries are usually **USD** and kept as raw text (not converted into the peso `salary_min/max` columns). Employer names aren't shown on search cards. |
 | `linkedin` | LinkedIn Jobs. Supports `--location` and `--full-desc`. Large job market with tech roles. |
-| `indeed` | Indeed Philippines. Supports `--location` and `--full-desc`. **Note:** Selectors may need adjustment as site updates frequently. |
-| `kalibrr` | Kalibrr Philippines. Popular local job board. **Note:** Selectors may need adjustment as site updates frequently. |
+| `indeed` | Indeed Philippines. Supports `--location` and `--full-desc`. ✅ Working. |
+| `kalibrr` | Kalibrr Philippines. **Note:** May have access restrictions or require login. Selectors may need adjustment. |
 
 ## Options
 
