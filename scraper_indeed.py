@@ -11,6 +11,8 @@ IMPORTANT (please read):
 - This scrapes publicly visible search-result pages only (no login, no
   personal data). Keep request volume low and keep the delays to avoid
   getting rate-limited or blocked. Personal/non-commercial use only.
+- Indeed requires clicking the "Next" button for pagination rather than
+  direct URL navigation (anti-bot protection).
 """
 import argparse
 import logging
@@ -86,8 +88,8 @@ def _extract_listing(card, search_keyword: str) -> JobListing | None:
     job_url = href if href.startswith("http") else config.INDEED_BASE_URL + href
     # Clean up tracking parameters but keep jk= (job key)
     if "?" in job_url:
-        base, params = job_url.split("?", 1)
-        jk_match = re.search(r"jk=([a-zA-Z0-9]+)", params)
+        base, params_str = job_url.split("?", 1)
+        jk_match = re.search(r"jk=([a-zA-Z0-9]+)", params_str)
         if jk_match:
             job_url = f"{base}?jk={jk_match.group(1)}"
 
@@ -116,20 +118,53 @@ def _extract_listing(card, search_keyword: str) -> JobListing | None:
 
 
 def _scrape_search_page(page, keyword: str, page_num: int, debug: bool,
-                        location: str = "") -> list[JobListing]:
-    """Loads one search-result page (with retries) and extracts its listings."""
-    url = _build_search_url(keyword, page_num, location)
-    logging.info("[indeed] Fetching search page %d: %s", page_num, url)
+                        location: str = "", first_page: bool = True) -> list[JobListing]:
+    """
+    Loads one search-result page and extracts its listings.
+    For page 1, navigates to the URL directly.
+    For subsequent pages, clicks the "Next" button (Indeed anti-bot protection).
+    """
+    if first_page:
+        # First page: navigate to the URL
+        url = _build_search_url(keyword, page_num, location)
+        logging.info("[indeed] Fetching search page %d: %s", page_num, url)
 
-    utils.retry(
-        lambda: page.goto(url, wait_until="domcontentloaded",
-                          timeout=config.PAGE_LOAD_TIMEOUT_MS),
-        retries=config.RETRY_ATTEMPTS,
-        delay=config.RETRY_DELAY_SECONDS,
-        backoff=config.RETRY_BACKOFF,
-    )
-    # Give the page a moment for JS-rendered content to settle
-    page.wait_for_timeout(config.RENDER_WAIT_MS)
+        utils.retry(
+            lambda: page.goto(url, wait_until="domcontentloaded",
+                              timeout=config.PAGE_LOAD_TIMEOUT_MS),
+            retries=config.RETRY_ATTEMPTS,
+            delay=config.RETRY_DELAY_SECONDS,
+            backoff=config.RETRY_BACKOFF,
+        )
+        # Give the page a moment for JS-rendered content to settle.
+        page.wait_for_timeout(config.RENDER_WAIT_MS)
+    else:
+        # Subsequent pages: click the "Next" button
+        logging.info("[indeed] Clicking 'Next' to go to page %d", page_num)
+        try:
+            # Try to find and click the Next button
+            next_button = page.query_selector('a[aria-label="Next Page"]')
+            if not next_button:
+                next_button = page.query_selector('a[data-testid="pagination-page-next"]')
+            if not next_button:
+                next_button = page.query_selector('li.next a')
+
+            if next_button:
+                utils.retry(
+                    lambda: next_button.click(),
+                    retries=config.RETRY_ATTEMPTS,
+                    delay=config.RETRY_DELAY_SECONDS,
+                    backoff=config.RETRY_BACKOFF,
+                )
+                # Wait for page to load after clicking
+                page.wait_for_timeout(config.RENDER_WAIT_MS * 2)
+            else:
+                logging.warning("[indeed] No 'Next' button found on page %d",
+                                page_num - 1)
+                return []
+        except Exception as e:
+            logging.error("[indeed] Failed to click 'Next' button: %s", e)
+            return []
 
     if debug:
         save_debug_html(page, f"indeed_page{page_num}")
@@ -142,12 +177,12 @@ def _scrape_search_page(page, keyword: str, page_num: int, debug: bool,
             listings.append(listing)
 
     if not listings:
-        # Selectors may have changed — always keep evidence for troubleshooting.
+        # Selectors may have changed -- always keep evidence for troubleshooting.
         html_path = save_debug_html(page, f"indeed_no_results_page{page_num}")
         logging.warning(
-            "[indeed] 0 listings extracted from %s — the site may have "
+            "[indeed] 0 listings extracted from page %d -- the site may have "
             "changed markup. Inspect %s and update SELECTORS in config.py.",
-            url, html_path)
+            page_num, html_path)
 
     return listings
 
@@ -171,7 +206,7 @@ def _fetch_job_details(context, url: str) -> tuple[str, str]:
             page.wait_for_selector(_SELECTORS["job_detail_description"],
                                    timeout=config.DETAIL_WAIT_TIMEOUT_MS)
         except PlaywrightTimeoutError:
-            # Takedown pages can render after domcontentloaded — recheck
+            # Takedown pages can render after domcontentloaded -- recheck
             if _is_gone(page, response):
                 raise AdGoneError(f"job ad removed: {url}")
             raise
@@ -208,7 +243,7 @@ def _fetch_full_descriptions(context, listings: list[JobListing],
             fetched += 1
         except AdGoneError:
             gone += 1
-            logging.info("[indeed] '%s' is no longer advertised — "
+            logging.info("[indeed] '%s' is no longer advertised -- "
                          "keeping the search-card teaser.", listing.title)
         except Exception as e:
             logging.error("[indeed] Could not fetch description for '%s' (%s): %s",
@@ -229,7 +264,9 @@ def _scrape_keyword(page, keyword: str, max_pages: int, delay_seconds: float,
     duplicates = 0
     for page_num in range(1, max_pages + 1):
         try:
-            listings = _scrape_search_page(page, keyword, page_num, debug, location)
+            listings = _scrape_search_page(
+                page, keyword, page_num, debug, location,
+                first_page=(page_num == 1))
         except Exception as e:
             logging.error("[indeed] Failed to scrape search page %d: %s",
                           page_num, e)
@@ -332,6 +369,6 @@ if __name__ == "__main__":
     print(f"Scraped {len(results)} unique listings from Indeed Philippines")
     print(f"{'='*60}\n")
     for job in results[:5]:  # show first 5
-        print(f"• {job.title} at {job.company}")
+        print(f"* {job.title} at {job.company}")
         print(f"  {job.location} | {job.salary or 'No salary listed'}")
         print(f"  {job.url}\n")
