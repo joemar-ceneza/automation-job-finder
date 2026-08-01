@@ -64,7 +64,7 @@ USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/124.0 Safari/537.36"
 )
-HEADLESS = False  # --debug overrides this to run the browser visibly
+HEADLESS = True  # --debug overrides this to run the browser visibly
 DEFAULT_PAGES = 2
 DEFAULT_DELAY_SECONDS = 3.0  # politeness delay between requests — keep >= 3
 PAGE_LOAD_TIMEOUT_MS = 30000
