@@ -170,7 +170,69 @@ def _send_email(plan: NotificationPlan) -> bool:
     return email_handler.run_email_digest(plan.selected)
 
 
-_CHANNELS = {"desktop": _send_desktop, "email": _send_email}
+def _send_telegram(plan: NotificationPlan) -> bool:
+    """
+    Sends notifications via Telegram bot. Requires TELEGRAM_BOT_TOKEN and
+    TELEGRAM_CHAT_ID in .env. The bot token comes from @BotFather, and the
+    chat ID is your personal chat ID or a group chat ID.
+    """
+    import os
+    import requests
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+
+    if not bot_token or not chat_id:
+        logging.info("Telegram notifications need TELEGRAM_BOT_TOKEN and "
+                     "TELEGRAM_CHAT_ID in .env — see .env.example.")
+        return False
+
+    # Build message
+    message_lines = [f"🔔 *New Job Matches* ({len(plan.selected)})\n"]
+
+    for job in plan.selected:
+        score = _score(job)
+        title = job.get('title', 'Unknown')
+        company = job.get('company') or 'Unknown'
+        location = job.get('location', '')
+        salary = job.get('salary', '')
+        url = job.get('url', '')
+
+        message_lines.append(f"*{score:.0f}%* — {title}")
+        message_lines.append(f"📍 {company}")
+        if location:
+            message_lines.append(f"   {location}")
+        if salary:
+            message_lines.append(f"💰 {salary}")
+        if url:
+            message_lines.append(f"🔗 [View Job]({url})")
+        message_lines.append("")  # blank line between jobs
+
+    message = "\n".join(message_lines)
+
+    # Send via Telegram API
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "Markdown",
+        "disable_web_page_preview": True,
+    }
+
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        response.raise_for_status()
+        logging.info("Telegram notification sent successfully.")
+        return True
+    except requests.exceptions.RequestException as error:
+        logging.warning("Telegram notification failed: %s", error)
+        return False
+
+
+_CHANNELS = {"desktop": _send_desktop, "email": _send_email, "telegram": _send_telegram}
 
 
 def send(plan: NotificationPlan,

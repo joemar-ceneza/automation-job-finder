@@ -64,7 +64,7 @@ USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/124.0 Safari/537.36"
 )
-HEADLESS = True  # --debug overrides this to run the browser visibly
+HEADLESS = False  # --debug overrides this to run the browser visibly
 DEFAULT_PAGES = 2
 DEFAULT_DELAY_SECONDS = 3.0  # politeness delay between requests — keep >= 3
 PAGE_LOAD_TIMEOUT_MS = 30000
@@ -73,7 +73,7 @@ DETAIL_WAIT_TIMEOUT_MS = 10000
 
 # Sites searched when --site isn't given. Each name maps to a
 # scraper_<name>.py module with a run_scraper() entry point.
-DEFAULT_SITES = ["jobstreet", "onlinejobs"]
+DEFAULT_SITES = ["jobstreet", "onlinejobs", "linkedin", "indeed", "kalibrr"]
 
 # Companies whose listings are skipped entirely — never scored, stored, or
 # shown. Case-insensitive substring match on the company name, so "acme"
@@ -101,6 +101,14 @@ PLACEHOLDER_COMPANIES = {
 
 JOBSTREET_BASE_URL = "https://ph.jobstreet.com"
 ONLINEJOBS_BASE_URL = "https://www.onlinejobs.ph"
+LINKEDIN_BASE_URL = "https://www.linkedin.com"
+INDEED_BASE_URL = "https://ph.indeed.com"
+KALIBRR_BASE_URL = "https://www.kalibrr.com"
+
+# LinkedIn needs more time for JS rendering due to heavier page load
+LINKEDIN_RENDER_WAIT_MS = 3000
+# Kalibrr also needs extra time for JS rendering
+KALIBRR_RENDER_WAIT_MS = 3000
 
 # Centralized selectors per site — patch here when a site changes its markup.
 SELECTORS = {
@@ -124,6 +132,42 @@ SELECTORS = {
         "job_salary": "dl:has(i.icon-round-dollar) dd",
         "job_listing_date": "p[data-temp]",
         "job_detail_description": "#job-description",
+    },
+    "linkedin": {
+        "job_card": "div.base-card",
+        "job_title": "h3.base-search-card__title",
+        "job_link": "a.base-card__full-link",
+        "job_company": "h4.base-search-card__subtitle",
+        "job_location": "span.job-search-card__location",
+        "job_teaser": "div.base-search-card__metadata",
+        "job_salary": "span.job-search-card__salary-info",
+        "job_listing_date": "time.job-search-card__listdate",
+        "job_detail_description": "div.show-more-less-html__markup",
+        "job_detail_salary": "span.salary",
+    },
+    "indeed": {
+        "job_card": "div.job_seen_beacon",
+        "job_title": "h2.jobTitle span",
+        "job_link": "h2.jobTitle a",
+        "job_company": "span.companyName",
+        "job_location": "div.companyLocation",
+        "job_teaser": "div.job-snippet",
+        "job_salary": "div.salary-snippet",
+        "job_listing_date": "span.date",
+        "job_detail_description": "div#jobDescriptionText",
+        "job_detail_salary": "div.salary-snippet",
+    },
+    "kalibrr": {
+        "job_card": "div.k-bg-white",
+        "job_title": "a.k-text-primary-color",
+        "job_link": "a.k-text-primary-color",
+        "job_company": "span.k-text-subdued",
+        "job_location": "span.k-inline-flex span",
+        "job_teaser": "div.k-text-subdued",
+        "job_salary": "span.k-font-bold",
+        "job_listing_date": "span.k-text-subdued",
+        "job_detail_description": "div.k-flex-1 div.k-mb-16",
+        "job_detail_salary": "span.k-font-bold",
     },
 }
 

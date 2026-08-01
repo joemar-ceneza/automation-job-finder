@@ -1,8 +1,7 @@
-# Resume-to-Job Matcher (JobStreet PH, OnlineJobs.ph)
+# Resume-to-Job Matcher (JobStreet PH, OnlineJobs.ph, LinkedIn, Indeed PH, Kalibrr)
 
 ## What This Does
-A local-first job search assistant. It scrapes **JobStreet PH** and
-**OnlineJobs.ph**, scores each listing against your resume's skills using
+A local-first job search assistant. It scrapes **JobStreet PH**, **OnlineJobs.ph**, **LinkedIn**, **Indeed Philippines**, and **Kalibrr**, scores each listing against your resume's skills using
 weighted keyword matching (skills in the job title count more than skills in the
 description), and stores everything in a local SQLite database plus a ranked CSV
 and HTML report. Jobs are deduplicated and tracked across runs.
@@ -12,8 +11,8 @@ explain why a job scored what it did, band its salary against the roles you've
 tracked, tailor your resume, draft a cover letter, prepare for the interview,
 pick which portfolio project to show, and track every application through a
 twelve-stage pipeline with funnel analytics. A local **Streamlit dashboard**
-does everything the terminal does; it can also email you a digest or send a
-desktop notification when something worth opening appears.
+does everything the terminal does; it can also email you a digest, send Telegram alerts,
+or send a desktop notification when something worth opening appears.
 
 **Every feature works completely without AI.** Standard mode is the product —
 free, offline, deterministic, and no API key. AI mode is an optional layer that
@@ -197,6 +196,9 @@ The pipeline:
 |------|-------|
 | `jobstreet` | JobStreet PH. Supports `--location` and `--full-desc`. |
 | `onlinejobs` | OnlineJobs.ph (remote jobs for PH workers). All listings are work-from-home; salaries are usually **USD** and kept as raw text (not converted into the peso `salary_min/max` columns). Employer names aren't shown on search cards. |
+| `linkedin` | LinkedIn Jobs. Supports `--location` and `--full-desc`. Large job market with tech roles. |
+| `indeed` | Indeed Philippines. Supports `--location` and `--full-desc`. **Note:** Selectors may need adjustment as site updates frequently. |
+| `kalibrr` | Kalibrr Philippines. Popular local job board. **Note:** Selectors may need adjustment as site updates frequently. |
 
 ## Options
 
@@ -372,13 +374,44 @@ case-insensitive substring, so `"acme"` also blocks "ACME Recruitment Inc".
 OnlineJobs.ph hides employer names on search cards, so its listings can't
 be blocked by company.
 
-## Email digest
+## Email digest & Telegram notifications
 `--email` sends the run's new matches (title, score, salary, matched skills,
 links) to `EMAIL_RECIPIENT` via Gmail SMTP. Configure `.env` first (see
 `.env.example`); the digest is skipped with a clear log message when
 credentials are missing. Combine with `--min-score` so the email only
 contains matches worth reading. Scheduled daily via Task Scheduler +
 `--email`, this becomes a hands-off job alert.
+
+### Telegram notifications
+Get instant job alerts on your phone via Telegram. To set up:
+
+1. **Create a Telegram bot:**
+   - Talk to [@BotFather](https://t.me/BotFather) on Telegram
+   - Send `/newbot` and follow the prompts
+   - Copy the bot token (looks like `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`)
+
+2. **Get your chat ID:**
+   - Talk to [@userinfobot](https://t.me/userinfobot) on Telegram
+   - It will reply with your chat ID (a number like `123456789`)
+
+3. **Configure `.env`:**
+   ```
+   TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
+   TELEGRAM_CHAT_ID=123456789
+   ```
+
+4. **Enable Telegram channel in `config.py`:**
+   ```python
+   NOTIFY_CHANNELS = ["telegram"]  # or ["desktop", "telegram", "email"]
+   ```
+
+5. **Test it:**
+   ```
+   python main.py --notify
+   ```
+
+Telegram notifications respect the same quiet rules as desktop/email: minimum score,
+quiet hours, max per run, and no repeats.
 
 ## If scraping returns 0 results
 Job sites update their page markup periodically, which breaks selectors.

@@ -57,7 +57,7 @@ _TABLE_COLUMNS = ["status", "score_percent", "title", "company", "location",
 _BOARD_CARD_LIMIT = 8
 
 # Sites the Run tab can search — matches main.SITE_SCRAPERS.
-_SITE_OPTIONS = ["jobstreet", "onlinejobs"]
+_SITE_OPTIONS = ["jobstreet", "onlinejobs", "linkedin", "indeed", "kalibrr"]
 
 
 # ======================================================

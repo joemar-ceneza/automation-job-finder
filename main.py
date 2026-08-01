@@ -52,6 +52,9 @@ import salary_bands
 import scraper_common
 import scraper_jobstreet
 import scraper_onlinejobs
+import scraper_linkedin
+import scraper_indeed
+import scraper_kalibrr
 import skill_extractor
 import skill_proposals
 import stages
@@ -62,6 +65,9 @@ import tracked_skills
 SITE_SCRAPERS = {
     "jobstreet": scraper_jobstreet,
     "onlinejobs": scraper_onlinejobs,
+    "linkedin": scraper_linkedin,
+    "indeed": scraper_indeed,
+    "kalibrr": scraper_kalibrr,
 }
 
 
