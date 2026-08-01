@@ -61,7 +61,7 @@ def _build_search_url(keyword: str, page_num: int, location: str = "") -> str:
         params["l"] = location.strip()
 
     query_string = urllib.parse.urlencode(params)
-    return f"{config.KALIBRR_BASE_URL}/en-ph/job-board/te/technology?{query_string}"
+    return f"{config.KALIBRR_BASE_URL}/home/all-jobs?{query_string}"
 
 
 # ======================================================
@@ -69,13 +69,19 @@ def _build_search_url(keyword: str, page_num: int, location: str = "") -> str:
 # ======================================================
 def _extract_listing(card, search_keyword: str) -> JobListing | None:
     """Extracts one JobListing from a search-result card element."""
-    title_el = card.query_selector(_SELECTORS["job_title"])
-    if not title_el:
-        return None  # not a job card
+    # Kalibrr cards have text in this format:
+    # Line 0: Job title
+    # Line 1: Company name
+    card_text = card.inner_text().strip()
+    lines = [line.strip() for line in card_text.split("\n") if line.strip()]
 
-    title = title_el.inner_text().strip()
+    if len(lines) < 2:
+        return None  # Not a valid job card
 
-    # Kalibrr job cards have the link
+    title = lines[0]
+    company = lines[1]
+
+    # Find the job link
     link_el = card.query_selector(_SELECTORS["job_link"])
     if not link_el:
         return None
@@ -85,13 +91,11 @@ def _extract_listing(card, search_keyword: str) -> JobListing | None:
     # Clean up tracking parameters
     job_url = job_url.split("?")[0]
 
-    company_el = card.query_selector(_SELECTORS["job_company"])
+    # Optional fields
     location_el = card.query_selector(_SELECTORS["job_location"])
     teaser_el = card.query_selector(_SELECTORS["job_teaser"])
     salary_el = card.query_selector(_SELECTORS["job_salary"])
     date_el = card.query_selector(_SELECTORS["job_listing_date"])
-
-    company = company_el.inner_text().strip() if company_el else ""
 
     id_match = _JOB_ID_PATTERN.search(job_url)
     return JobListing(

@@ -158,9 +158,9 @@ SELECTORS = {
         "job_detail_salary": "div#salaryInfoAndJobType",
     },
     "kalibrr": {
-        "job_card": "div.k-bg-white",
-        "job_title": "a.k-text-primary-color",
-        "job_link": "a.k-text-primary-color",
+        "job_card": "div.k-flex.k-p-4",
+        "job_title": "h2 a, h3 a",
+        "job_link": "a[href*=jobs]",
         "job_company": "span.k-text-subdued",
         "job_location": "span.k-inline-flex span",
         "job_teaser": "div.k-text-subdued",
