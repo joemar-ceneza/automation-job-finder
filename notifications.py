@@ -20,9 +20,26 @@ failure can never lose the record of what was chosen.
 """
 import datetime
 import logging
+import os
 from dataclasses import dataclass, field
 
+from dotenv import load_dotenv
+
 import config
+
+load_dotenv()
+
+# Telegram hard-caps a message at 4096 characters and rejects the whole thing
+# if it goes over, so blocks are packed into chunks below that with headroom.
+_TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
+_TELEGRAM_LIMIT = 3900
+
+# Every one of these is a MarkdownV2 control character. An unescaped one in a
+# job title — "Node_JS Developer", "C* Engineer", "Dev [Remote]" — makes
+# Telegram reject the entire message with a 400, so they are escaped everywhere
+# text is interpolated.
+_MARKDOWN_V2_SPECIALS = r"_*[]()~`>#+-=|{}.!"
+_ESCAPE_TABLE = str.maketrans({char: "\\" + char for char in _MARKDOWN_V2_SPECIALS})
 
 
 @dataclass
@@ -170,66 +187,115 @@ def _send_email(plan: NotificationPlan) -> bool:
     return email_handler.run_email_digest(plan.selected)
 
 
+def _escape(value: object) -> str:
+    """Escapes MarkdownV2 control characters so Telegram cannot reject a job title."""
+    return str(value or "").translate(_ESCAPE_TABLE)
+
+
+def _telegram_blocks(plan: NotificationPlan) -> list[str]:
+    """One formatted block per job. Kept separate so it can be tested offline."""
+    blocks = []
+    for job in plan.selected:
+        lines = [f"*{_escape(f'{_score(job):.0f}%')}* — {_escape(job.get('title') or 'Untitled')}",
+                 f"📍 {_escape(job.get('company') or 'Unknown')}"]
+        if job.get("location"):
+            lines.append(f"   {_escape(job['location'])}")
+        if job.get("salary"):
+            lines.append(f"💰 {_escape(job['salary'])}")
+        if job.get("url"):
+            # Inside a link target only ')' and '\' are special — escaping the
+            # rest here would corrupt the URL.
+            target = str(job["url"]).replace("\\", "\\\\").replace(")", "\\)")
+            lines.append(f"🔗 [View Job]({target})")
+        blocks.append("\n".join(lines))
+    return blocks
+
+
+def _chunk(blocks: list[str], header: str,
+           limit: int = _TELEGRAM_LIMIT) -> list[str]:
+    """
+    Packs job blocks into messages under Telegram's size cap, splitting only
+    between jobs so a block is never cut mid-entity (which would 400).
+    """
+    messages: list[str] = []
+    current = header
+    for block in blocks:
+        candidate = f"{current}\n\n{block}" if current else block
+        if len(candidate) > limit and current:
+            messages.append(current)
+            current = block
+        else:
+            current = candidate
+    if current:
+        messages.append(current)
+    return messages
+
+
+def _post_telegram(token: str, chat_id: str, text: str,
+                   markdown: bool = True) -> None:
+    """Posts one message. Raises on any transport or API error."""
+    import httpx
+
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "disable_web_page_preview": True,
+    }
+    if markdown:
+        payload["parse_mode"] = "MarkdownV2"
+    reply = httpx.post(_TELEGRAM_API.format(token=token), json=payload,
+                       timeout=15)
+    reply.raise_for_status()
+
+
 def _send_telegram(plan: NotificationPlan) -> bool:
     """
-    Sends notifications via Telegram bot. Requires TELEGRAM_BOT_TOKEN and
-    TELEGRAM_CHAT_ID in .env. The bot token comes from @BotFather, and the
-    chat ID is your personal chat ID or a group chat ID.
+    Sends the plan to a Telegram chat. Needs TELEGRAM_BOT_TOKEN (from
+    @BotFather) and TELEGRAM_CHAT_ID in .env.
+
+    Formatting is the whole risk here. Telegram rejects an entire message when
+    its Markdown does not parse, and because a rejected send means the jobs are
+    never recorded as announced, the same message would be rebuilt and rejected
+    on every future run — one job title with an underscore in it could silence
+    notifications permanently. So text is escaped, long batches are split, and
+    a formatting failure falls back to plain text rather than giving up.
     """
-    import os
-    import requests
-    from dotenv import load_dotenv
-
-    load_dotenv()
-
-    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
-
-    if not bot_token or not chat_id:
+    if not token or not chat_id:
         logging.info("Telegram notifications need TELEGRAM_BOT_TOKEN and "
                      "TELEGRAM_CHAT_ID in .env — see .env.example.")
         return False
 
-    # Build message
-    message_lines = [f"🔔 *New Job Matches* ({len(plan.selected)})\n"]
+    header = f"🔔 *New Job Matches* \\({len(plan.selected)}\\)"
+    messages = _chunk(_telegram_blocks(plan), header)
 
-    for job in plan.selected:
-        score = _score(job)
-        title = job.get('title', 'Unknown')
-        company = job.get('company') or 'Unknown'
-        location = job.get('location', '')
-        salary = job.get('salary', '')
-        url = job.get('url', '')
+    sent = 0
+    for message in messages:
+        try:
+            _post_telegram(token, chat_id, message)
+            sent += 1
+        except Exception as error:
+            # Retrying identical Markdown cannot succeed, so drop the formatting
+            # rather than the notification.
+            logging.warning("Telegram rejected a formatted message (%s) — "
+                            "retrying as plain text.", error)
+            try:
+                _post_telegram(token, chat_id, _plain(message), markdown=False)
+                sent += 1
+            except Exception as fallback_error:
+                logging.error("Telegram send failed: %s", fallback_error)
 
-        message_lines.append(f"*{score:.0f}%* — {title}")
-        message_lines.append(f"📍 {company}")
-        if location:
-            message_lines.append(f"   {location}")
-        if salary:
-            message_lines.append(f"💰 {salary}")
-        if url:
-            message_lines.append(f"🔗 [View Job]({url})")
-        message_lines.append("")  # blank line between jobs
+    if sent:
+        logging.info("Telegram notification sent (%d message(s)).", sent)
+    return sent > 0
 
-    message = "\n".join(message_lines)
 
-    # Send via Telegram API
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": message,
-        "parse_mode": "Markdown",
-        "disable_web_page_preview": True,
-    }
-
-    try:
-        response = requests.post(url, json=payload, timeout=10)
-        response.raise_for_status()
-        logging.info("Telegram notification sent successfully.")
-        return True
-    except requests.exceptions.RequestException as error:
-        logging.warning("Telegram notification failed: %s", error)
-        return False
+def _plain(message: str) -> str:
+    """Strips the MarkdownV2 escaping and emphasis for the fallback send."""
+    for char in _MARKDOWN_V2_SPECIALS:
+        message = message.replace("\\" + char, char)
+    return message.replace("*", "")
 
 
 _CHANNELS = {"desktop": _send_desktop, "email": _send_email, "telegram": _send_telegram}

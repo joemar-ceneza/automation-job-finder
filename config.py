@@ -71,6 +71,16 @@ PAGE_LOAD_TIMEOUT_MS = 30000
 RENDER_WAIT_MS = 2000  # settle time for JS-rendered search results
 DETAIL_WAIT_TIMEOUT_MS = 10000
 
+# How many detail pages may time out in a row before --full-desc gives up for
+# that site. Consecutive timeouts mean the detail selector is wrong, not that
+# the network is flaky, and continuing costs ~39s per remaining job for nothing.
+DETAIL_FAILURE_LIMIT = 5
+
+# How long to wait for a "load more" click to actually add cards. Waiting on the
+# card count rather than a fixed sleep keeps slow connections correct and fast
+# ones quick.
+LOAD_MORE_TIMEOUT_MS = 10000
+
 # Sites searched when --site isn't given. Each name maps to a
 # scraper_<name>.py module with a run_scraper() entry point.
 DEFAULT_SITES = ["jobstreet", "onlinejobs", "linkedin", "indeed", "kalibrr"]
@@ -112,16 +122,20 @@ KALIBRR_RENDER_WAIT_MS = 3000
 
 # Centralized selectors per site — patch here when a site changes its markup.
 SELECTORS = {
+    # The data-automation attribute is the stable part of JobStreet's markup;
+    # the element type is not. Pinning these to a tag is what silently broke
+    # job_location — the attribute never moved, the <span> just became an <a>.
+    # Match on the attribute alone so the next tag change costs nothing.
     "jobstreet": {
         "job_card": "article",
-        "job_title": "a[data-automation='jobTitle']",
-        "job_company": "a[data-automation='jobCompany'], span[data-automation='jobCompany']",
-        "job_location": "span[data-automation='jobLocation']",
-        "job_teaser": "span[data-automation='jobShortDescription']",
-        "job_salary": "span[data-automation='jobSalary']",
+        "job_title": "[data-automation='jobTitle']",
+        "job_company": "[data-automation='jobCompany']",
+        "job_location": "[data-automation='jobLocation']",
+        "job_teaser": "[data-automation='jobShortDescription']",
+        "job_salary": "[data-automation='jobSalary']",
         "job_listing_date": "[data-automation='jobListingDate']",
-        "job_detail_description": "div[data-automation='jobAdDetails']",
-        "job_detail_salary": "span[data-automation='job-detail-salary']",
+        "job_detail_description": "[data-automation='jobAdDetails']",
+        "job_detail_salary": "[data-automation='job-detail-salary']",
     },
     "onlinejobs": {
         "job_card": "div.jobpost-cat-box.latest-job-post",
@@ -156,18 +170,30 @@ SELECTORS = {
         "job_listing_date": "span.date",
         "job_detail_description": "div#jobDescriptionText",
         "job_detail_salary": "div#salaryInfoAndJobType",
+        # Indeed blocks direct ?start= navigation, so pagination is a click.
+        # Interactive controls change more often than card markup, which is
+        # exactly why they belong here rather than inline in the scraper.
+        "next_button": ('a[aria-label="Next Page"], '
+                        'a[data-testid="pagination-page-next"], '
+                        'li.next a'),
     },
     "kalibrr": {
         "job_card": "div.k-flex.k-p-4",
         "job_title": "h2 a, h3 a",
         "job_link": "a[href*=jobs]",
+        # NOTE: Kalibrr's utility-class markup gives several fields the same
+        # class. Anything left as None is genuinely not distinguishable on a
+        # search card — better an empty field than one silently populated with
+        # the wrong text. Fill these in if you find a selector that isolates them.
         "job_company": "span.k-text-subdued",
-        "job_location": "span.k-inline-flex span",
-        "job_teaser": "div.k-text-subdued",
-        "job_salary": "span.k-font-bold",
-        "job_listing_date": "span.k-text-subdued",
+        "job_location": None,
+        "job_teaser": None,
+        "job_salary": None,
+        "job_listing_date": None,
         "job_detail_description": "div.k-flex-1 div.k-mb-16",
-        "job_detail_salary": "span.k-font-bold",
+        "job_detail_salary": None,
+        "search_input": 'input[placeholder="Job Position"]',
+        "load_more": 'button:has-text("Load More")',
     },
 }
 

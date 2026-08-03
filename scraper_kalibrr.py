@@ -17,33 +17,46 @@ import argparse
 import logging
 import re
 import time
-from dataclasses import asdict
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 import config
 import utils
-from scraper_common import (AdGoneError, JobListing, make_job_key,
-                            parse_relative_date, save_debug_html)
+from scraper_common import (AntiBotBlockedError, JobListing,
+                            fetch_full_descriptions, is_blocked, make_job_key,
+                            parse_relative_date, save_debug_html,
+                            save_error_screenshot, text_from)
 
 SOURCE = "kalibrr"
 _SELECTORS = config.SELECTORS[SOURCE]
 _JOB_ID_PATTERN = re.compile(r"/jobs/(\d+)/")
 
 
-def _is_gone(page, response) -> bool:
-    """True when the job ad was removed/expired (404 or takedown page)."""
-    if response is not None and response.status in (404, 410):
-        return True
-    if "page not found" in (page.title() or "").lower():
-        return True
-    return "no longer available" in (page.content() or "").lower()
+class SearchUnavailableError(Exception):
+    """
+    Raised when Kalibrr's search box cannot be found.
+
+    This has to be fatal rather than a warning. Kalibrr filters by typing into
+    an input rather than by URL, so if the input is missing the page still shows
+    the full unfiltered job board — and scraping that would tag hundreds of
+    unrelated listings with the keyword you searched for. `search_keyword` is
+    the column salary banding, skill demand and --learn all group by, so
+    carrying on quietly poisons those for every future run.
+    """
 
 
 # ======================================================
 # URL HELPERS
 # ======================================================
+def probe_url(keyword: str = "") -> str:
+    """
+    One representative URL, for --check-selectors. Kalibrr filters by typing
+    into the page rather than by URL, so the keyword plays no part here.
+    """
+    return _build_search_url()
+
+
 def _build_search_url() -> str:
     """
     Builds the Kalibrr job board URL.
@@ -55,35 +68,40 @@ def _build_search_url() -> str:
 # ======================================================
 # SEARCH RESULT PAGES
 # ======================================================
+def _title_and_company(card) -> tuple[str, str]:
+    """
+    Title and company from a card, preferring selectors over line position.
+
+    Reading lines[0] and lines[1] out of the card text works right up until a
+    card carries a "Featured" or "Urgent Hiring" badge, which shifts every field
+    by one and files the real title as the company. Selectors are tried first;
+    the line split stays as a fallback for cards that lack them.
+    """
+    title = text_from(card, _SELECTORS.get("job_title"))
+    company = text_from(card, _SELECTORS.get("job_company"))
+    if title and company:
+        return title, company
+
+    lines = [line.strip() for line in card.inner_text().split("\n")
+             if line.strip()]
+    if len(lines) < 2:
+        return title, company
+    return title or lines[0], company or lines[1]
+
+
 def _extract_listing(card, search_keyword: str) -> JobListing | None:
     """Extracts one JobListing from a search-result card element."""
-    # Kalibrr cards have text in this format:
-    # Line 0: Job title
-    # Line 1: Company name
-    card_text = card.inner_text().strip()
-    lines = [line.strip() for line in card_text.split("\n") if line.strip()]
-
-    if len(lines) < 2:
-        return None  # Not a valid job card
-
-    title = lines[0]
-    company = lines[1]
-
-    # Find the job link
     link_el = card.query_selector(_SELECTORS["job_link"])
     if not link_el:
+        return None                        # not a job card
+
+    title, company = _title_and_company(card)
+    if not title:
         return None
 
     href = link_el.get_attribute("href") or ""
     job_url = href if href.startswith("http") else config.KALIBRR_BASE_URL + href
-    # Clean up tracking parameters
-    job_url = job_url.split("?")[0]
-
-    # Optional fields
-    location_el = card.query_selector(_SELECTORS["job_location"])
-    teaser_el = card.query_selector(_SELECTORS["job_teaser"])
-    salary_el = card.query_selector(_SELECTORS["job_salary"])
-    date_el = card.query_selector(_SELECTORS["job_listing_date"])
+    job_url = job_url.split("?")[0]        # drop tracking parameters
 
     id_match = _JOB_ID_PATTERN.search(job_url)
     return JobListing(
@@ -91,22 +109,77 @@ def _extract_listing(card, search_keyword: str) -> JobListing | None:
                              title, company),
         title=title,
         company=company,
-        location=location_el.inner_text().strip() if location_el else "",
-        teaser=teaser_el.inner_text().strip() if teaser_el else "",
+        location=text_from(card, _SELECTORS.get("job_location")),
+        teaser=text_from(card, _SELECTORS.get("job_teaser")),
         url=job_url,
         source=SOURCE,
-        salary=salary_el.inner_text().strip() if salary_el else "",
-        listing_date=parse_relative_date(date_el.inner_text()) if date_el else "",
+        salary=text_from(card, _SELECTORS.get("job_salary")),
+        listing_date=parse_relative_date(
+            text_from(card, _SELECTORS.get("job_listing_date"))),
         search_keyword=search_keyword,
     )
 
 
+def _apply_search(page, keyword: str) -> None:
+    """
+    Types the keyword into Kalibrr's search box. Raises when the box is missing,
+    because the alternative is silently scraping the unfiltered board.
+    """
+    if not keyword:
+        return
+    logging.info("[kalibrr] Searching for: '%s'", keyword)
+    search_input = page.query_selector(_SELECTORS["search_input"])
+    if not search_input:
+        html_path = save_debug_html(page, "kalibrr_no_search_input")
+        raise SearchUnavailableError(
+            f"Kalibrr's search input {_SELECTORS['search_input']!r} was not "
+            f"found, so '{keyword}' could not be applied. Refusing to scrape "
+            f"the unfiltered job board — every listing would be mislabelled as "
+            f"a match for this keyword. Inspect {html_path} and update "
+            f"SELECTORS['kalibrr']['search_input'] in config.py.")
+    search_input.fill(keyword)
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(config.KALIBRR_RENDER_WAIT_MS)
+
+
+def _harvest(page, keyword: str,
+             unique_listings: dict[str, JobListing], seen_cards: int) -> int:
+    """
+    Extracts cards added since the last pass into unique_listings.
+    Returns the new total card count, so each card is only ever parsed once.
+    """
+    cards = page.query_selector_all(_SELECTORS["job_card"])
+    for card in cards[seen_cards:]:
+        listing = _extract_listing(card, keyword)
+        if listing and listing.job_key not in unique_listings:
+            unique_listings[listing.job_key] = listing
+    return len(cards)
+
+
+def _click_load_more(page, card_count: int) -> bool:
+    """
+    Clicks "Load More" and waits for the card count to actually grow.
+
+    Waiting on the DOM rather than a fixed sleep is what makes this reliable:
+    a fixed wait is a bet that rendering finishes in time, and losing that bet
+    looks exactly like "no more results".
+    Returns False when there is no button left to click.
+    """
+    button = page.query_selector(_SELECTORS["load_more"])
+    if not button:
+        return False
+    button.click()
+    page.wait_for_function(
+        "([selector, previous]) => "
+        "document.querySelectorAll(selector).length > previous",
+        arg=[_SELECTORS["job_card"], card_count],
+        timeout=config.LOAD_MORE_TIMEOUT_MS)
+    return True
+
+
 def _scrape_with_keyword(page, keyword: str, debug: bool,
-                         max_loads: int = 5) -> list[JobListing]:
-    """
-    Searches for a keyword using the search input and loads more jobs.
-    Returns all unique listings found.
-    """
+                         max_loads: int) -> list[JobListing]:
+    """Searches for a keyword, expands the results, and returns the listings."""
     url = _build_search_url()
     logging.info("[kalibrr] Loading job board: %s", url)
 
@@ -119,131 +192,48 @@ def _scrape_with_keyword(page, keyword: str, debug: bool,
     )
     page.wait_for_timeout(config.KALIBRR_RENDER_WAIT_MS)
 
-    # Use the search input to search for keyword
-    if keyword:
-        logging.info("[kalibrr] Searching for: '%s'", keyword)
-        search_input = page.query_selector('input[placeholder="Job Position"]')
-        if search_input:
-            search_input.fill(keyword)
-            page.keyboard.press("Enter")
-            page.wait_for_timeout(config.KALIBRR_RENDER_WAIT_MS)
-        else:
-            logging.warning("[kalibrr] Search input not found")
+    if is_blocked(page):
+        raise AntiBotBlockedError("Kalibrr served a bot challenge instead of "
+                                  "the job board.")
+
+    _apply_search(page, keyword)
 
     if debug:
         save_debug_html(page, f"kalibrr_search_{keyword}")
 
-    # Get initial listings
     unique_listings: dict[str, JobListing] = {}
-    cards = page.query_selector_all(_SELECTORS["job_card"])
-    for card in cards:
-        listing = _extract_listing(card, keyword)
-        if listing and listing.job_key not in unique_listings:
-            unique_listings[listing.job_key] = listing
-
+    seen_cards = _harvest(page, keyword, unique_listings, 0)
     logging.info("[kalibrr] Initial load: %d jobs", len(unique_listings))
 
-    # Click "Load More" button multiple times
     for load_num in range(1, max_loads + 1):
         try:
-            load_more = page.query_selector('button:has-text("Load More")')
-            if not load_more:
-                logging.info("[kalibrr] No more 'Load More' button found after %d loads",
-                             load_num - 1)
+            if not _click_load_more(page, seen_cards):
+                logging.info("[kalibrr] No 'Load More' button after %d load(s)"
+                             " — that is all of them.", load_num - 1)
                 break
-
-            logging.info("[kalibrr] Clicking 'Load More' (%d/%d)", load_num, max_loads)
-            load_more.click()
-            page.wait_for_timeout(config.KALIBRR_RENDER_WAIT_MS)
-
-            # Extract new listings
-            cards = page.query_selector_all(_SELECTORS["job_card"])
-            new_count = 0
-            for card in cards:
-                listing = _extract_listing(card, keyword)
-                if listing and listing.job_key not in unique_listings:
-                    unique_listings[listing.job_key] = listing
-                    new_count += 1
-
-            logging.info("[kalibrr] Load %d: +%d new jobs (total: %d)",
-                         load_num, new_count, len(unique_listings))
-
-            if new_count == 0:
-                logging.info("[kalibrr] No new jobs found, stopping load more")
-                break
-
-        except Exception as e:
-            logging.error("[kalibrr] Failed to load more: %s", e)
+        except PlaywrightTimeoutError:
+            logging.info("[kalibrr] 'Load More' added nothing within %dms — "
+                         "treating %d jobs as the full set.",
+                         config.LOAD_MORE_TIMEOUT_MS, len(unique_listings))
+            break
+        except Exception as error:
+            logging.error("[kalibrr] Failed to load more: %s", error)
+            save_error_screenshot(page, "kalibrr_load_more")
             break
 
+        before = len(unique_listings)
+        seen_cards = _harvest(page, keyword, unique_listings, seen_cards)
+        logging.info("[kalibrr] Load %d/%d: +%d new jobs (total: %d)",
+                     load_num, max_loads, len(unique_listings) - before,
+                     len(unique_listings))
+
+    if not unique_listings:
+        html_path = save_debug_html(page, "kalibrr_no_results")
+        logging.warning(
+            "[kalibrr] 0 listings extracted — the site may have changed "
+            "markup. Inspect %s and update SELECTORS in config.py.", html_path)
+
     return list(unique_listings.values())
-
-
-# ======================================================
-# JOB DETAIL PAGES
-# ======================================================
-def _fetch_job_details(context, url: str) -> tuple[str, str]:
-    """
-    Opens a job's detail page in a fresh tab and returns
-    (full_description, salary). Salary is "" when the ad doesn't state one.
-    Raises AdGoneError when the ad was removed after appearing in search.
-    """
-    page = context.new_page()
-    try:
-        response = page.goto(url, wait_until="domcontentloaded",
-                             timeout=config.PAGE_LOAD_TIMEOUT_MS)
-        if _is_gone(page, response):
-            raise AdGoneError(f"job ad removed: {url}")
-        try:
-            page.wait_for_selector(_SELECTORS["job_detail_description"],
-                                   timeout=config.DETAIL_WAIT_TIMEOUT_MS)
-        except PlaywrightTimeoutError:
-            # Takedown pages can render after domcontentloaded -- recheck
-            if _is_gone(page, response):
-                raise AdGoneError(f"job ad removed: {url}")
-            raise
-
-        detail_el = page.query_selector(_SELECTORS["job_detail_description"])
-        salary_el = page.query_selector(_SELECTORS["job_detail_salary"])
-
-        description = detail_el.inner_text().strip() if detail_el else ""
-        salary = salary_el.inner_text().strip() if salary_el else ""
-        return description, salary
-    finally:
-        page.close()
-
-
-def _fetch_full_descriptions(context, listings: list[JobListing],
-                             delay_seconds: float) -> None:
-    """Visits each job's detail page (rate limited) and fills in description."""
-    logging.info("[kalibrr] Fetching full descriptions for %d jobs "
-                 "(one request per %.1fs)...", len(listings), delay_seconds)
-    fetched = 0
-    gone = 0
-    for index, listing in enumerate(listings, start=1):
-        try:
-            description, salary = utils.retry(
-                lambda: _fetch_job_details(context, listing.url),
-                retries=config.RETRY_ATTEMPTS,
-                delay=config.RETRY_DELAY_SECONDS,
-                backoff=config.RETRY_BACKOFF,
-                give_up_on=(AdGoneError,),
-            )
-            listing.description = description
-            if salary and not listing.salary:
-                listing.salary = salary
-            fetched += 1
-        except AdGoneError:
-            gone += 1
-            logging.info("[kalibrr] '%s' is no longer advertised -- "
-                         "keeping the search-card teaser.", listing.title)
-        except Exception as e:
-            logging.error("[kalibrr] Could not fetch description for '%s' (%s): %s",
-                          listing.title, listing.url, e)
-        if index < len(listings):
-            time.sleep(delay_seconds)  # be polite, avoid rate limits
-    logging.info("[kalibrr] Full descriptions fetched: %d/%d (%d ads "
-                 "no longer advertised)", fetched, len(listings), gone)
 
 
 # ======================================================
@@ -279,8 +269,14 @@ def run_scraper(keywords: list[str] | str, max_pages: int = config.DEFAULT_PAGES
             for index, keyword in enumerate(keywords):
                 logging.info("[kalibrr] Searching keyword %d/%d: '%s'",
                              index + 1, len(keywords), keyword)
-                listings = _scrape_with_keyword(page, keyword, debug,
-                                                max_loads=max_pages)
+                try:
+                    listings = _scrape_with_keyword(page, keyword, debug,
+                                                    max_loads=max_pages)
+                except (SearchUnavailableError, AntiBotBlockedError) as error:
+                    # Neither is fixable by trying the next keyword, and both
+                    # need to be seen rather than buried among page warnings.
+                    logging.error("[kalibrr] %s", error)
+                    break
 
                 for listing in listings:
                     if listing.job_key not in unique_listings:
@@ -292,8 +288,9 @@ def run_scraper(keywords: list[str] | str, max_pages: int = config.DEFAULT_PAGES
             logging.info("[kalibrr] Total unique jobs: %d", len(unique_listings))
 
             if fetch_details and unique_listings:
-                _fetch_full_descriptions(context, list(unique_listings.values()),
-                                         delay_seconds)
+                fetch_full_descriptions(SOURCE, _SELECTORS, context,
+                                        list(unique_listings.values()),
+                                        delay_seconds)
         finally:
             if browser:
                 browser.close()

@@ -19,34 +19,31 @@ import logging
 import re
 import time
 import urllib.parse
-from dataclasses import asdict
 
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 import config
 import utils
-from scraper_common import (AdGoneError, JobListing, make_job_key,
+from scraper_common import (AntiBotBlockedError, JobListing,
+                            fetch_full_descriptions, is_blocked, make_job_key,
                             parse_relative_date, save_debug_html,
-                            save_error_screenshot)
+                            save_error_screenshot, text_from)
 
 SOURCE = "linkedin"
 _SELECTORS = config.SELECTORS[SOURCE]
 _JOB_ID_PATTERN = re.compile(r"/jobs/view/(\d+)")
-
-
-def _is_gone(page, response) -> bool:
-    """True when the job ad was removed/expired (404 or takedown page)."""
-    if response is not None and response.status in (404, 410):
-        return True
-    if "page not found" in (page.title() or "").lower():
-        return True
-    return "no longer accepting applications" in (page.content() or "").lower()
+# LinkedIn's takedown wording differs from the other sites'.
+_GONE_MARKER = "no longer accepting applications"
 
 
 # ======================================================
 # URL HELPERS
 # ======================================================
+def probe_url(keyword: str) -> str:
+    """One representative search URL, for --check-selectors."""
+    return _build_search_url(keyword, 1)
+
+
 def _build_search_url(keyword: str, page_num: int, location: str = "") -> str:
     """
     Builds the LinkedIn jobs search URL for a keyword, page number, and
@@ -89,13 +86,7 @@ def _extract_listing(card, search_keyword: str) -> JobListing | None:
     # Clean up tracking parameters
     job_url = job_url.split("?")[0]
 
-    company_el = card.query_selector(_SELECTORS["job_company"])
-    location_el = card.query_selector(_SELECTORS["job_location"])
-    teaser_el = card.query_selector(_SELECTORS["job_teaser"])
-    salary_el = card.query_selector(_SELECTORS["job_salary"])
-    date_el = card.query_selector(_SELECTORS["job_listing_date"])
-
-    company = company_el.inner_text().strip() if company_el else ""
+    company = text_from(card, _SELECTORS.get("job_company"))
 
     id_match = _JOB_ID_PATTERN.search(job_url)
     return JobListing(
@@ -103,12 +94,13 @@ def _extract_listing(card, search_keyword: str) -> JobListing | None:
                              title, company),
         title=title,
         company=company,
-        location=location_el.inner_text().strip() if location_el else "",
-        teaser=teaser_el.inner_text().strip() if teaser_el else "",
+        location=text_from(card, _SELECTORS.get("job_location")),
+        teaser=text_from(card, _SELECTORS.get("job_teaser")),
         url=job_url,
         source=SOURCE,
-        salary=salary_el.inner_text().strip() if salary_el else "",
-        listing_date=parse_relative_date(date_el.inner_text()) if date_el else "",
+        salary=text_from(card, _SELECTORS.get("job_salary")),
+        listing_date=parse_relative_date(
+            text_from(card, _SELECTORS.get("job_listing_date"))),
         search_keyword=search_keyword,
     )
 
@@ -140,7 +132,13 @@ def _scrape_search_page(page, keyword: str, page_num: int, debug: bool,
             listings.append(listing)
 
     if not listings:
-        # Selectors may have changed — always keep evidence for troubleshooting.
+        # A sign-in wall or bot challenge yields zero cards exactly like a
+        # markup change does, so separate them before blaming the selectors.
+        if is_blocked(page):
+            save_debug_html(page, f"linkedin_blocked_page{page_num}")
+            raise AntiBotBlockedError(
+                f"LinkedIn served a verification or sign-in wall on page "
+                f"{page_num}")
         html_path = save_debug_html(page, f"linkedin_no_results_page{page_num}")
         logging.warning(
             "[linkedin] 0 listings extracted from %s — the site may have "
@@ -148,73 +146,6 @@ def _scrape_search_page(page, keyword: str, page_num: int, debug: bool,
             url, html_path)
 
     return listings
-
-
-# ======================================================
-# JOB DETAIL PAGES
-# ======================================================
-def _fetch_job_details(context, url: str) -> tuple[str, str]:
-    """
-    Opens a job's detail page in a fresh tab and returns
-    (full_description, salary). Salary is "" when the ad doesn't state one.
-    Raises AdGoneError when the ad was removed after appearing in search.
-    """
-    page = context.new_page()
-    try:
-        response = page.goto(url, wait_until="domcontentloaded",
-                             timeout=config.PAGE_LOAD_TIMEOUT_MS)
-        if _is_gone(page, response):
-            raise AdGoneError(f"job ad removed: {url}")
-        try:
-            page.wait_for_selector(_SELECTORS["job_detail_description"],
-                                   timeout=config.DETAIL_WAIT_TIMEOUT_MS)
-        except PlaywrightTimeoutError:
-            # Takedown pages can render after domcontentloaded — recheck
-            if _is_gone(page, response):
-                raise AdGoneError(f"job ad removed: {url}")
-            raise
-
-        detail_el = page.query_selector(_SELECTORS["job_detail_description"])
-        salary_el = page.query_selector(_SELECTORS["job_detail_salary"])
-
-        description = detail_el.inner_text().strip() if detail_el else ""
-        salary = salary_el.inner_text().strip() if salary_el else ""
-        return description, salary
-    finally:
-        page.close()
-
-
-def _fetch_full_descriptions(context, listings: list[JobListing],
-                             delay_seconds: float) -> None:
-    """Visits each job's detail page (rate limited) and fills in description."""
-    logging.info("[linkedin] Fetching full descriptions for %d jobs "
-                 "(one request per %.1fs)...", len(listings), delay_seconds)
-    fetched = 0
-    gone = 0
-    for index, listing in enumerate(listings, start=1):
-        try:
-            description, salary = utils.retry(
-                lambda: _fetch_job_details(context, listing.url),
-                retries=config.RETRY_ATTEMPTS,
-                delay=config.RETRY_DELAY_SECONDS,
-                backoff=config.RETRY_BACKOFF,
-                give_up_on=(AdGoneError,),
-            )
-            listing.description = description
-            if salary and not listing.salary:
-                listing.salary = salary
-            fetched += 1
-        except AdGoneError:
-            gone += 1
-            logging.info("[linkedin] '%s' is no longer advertised — "
-                         "keeping the search-card teaser.", listing.title)
-        except Exception as e:
-            logging.error("[linkedin] Could not fetch description for '%s' (%s): %s",
-                          listing.title, listing.url, e)
-        if index < len(listings):
-            time.sleep(delay_seconds)  # be polite, avoid rate limits
-    logging.info("[linkedin] Full descriptions fetched: %d/%d (%d ads "
-                 "no longer advertised)", fetched, len(listings), gone)
 
 
 def _scrape_keyword(page, keyword: str, max_pages: int, delay_seconds: float,
@@ -228,6 +159,12 @@ def _scrape_keyword(page, keyword: str, max_pages: int, delay_seconds: float,
     for page_num in range(1, max_pages + 1):
         try:
             listings = _scrape_search_page(page, keyword, page_num, debug, location)
+        except AntiBotBlockedError as error:
+            logging.warning(
+                "[linkedin] %s. Keeping the %d listing(s) already found; "
+                "getting past this would mean defeating an access control, "
+                "which this tool does not do.", error, len(unique_listings))
+            break
         except Exception as e:
             logging.error("[linkedin] Failed to scrape search page %d: %s",
                           page_num, e)
@@ -293,8 +230,9 @@ def run_scraper(keywords: list[str] | str, max_pages: int = config.DEFAULT_PAGES
                              "across pages/keywords.", duplicates)
 
             if fetch_details and unique_listings:
-                _fetch_full_descriptions(context, list(unique_listings.values()),
-                                         delay_seconds)
+                fetch_full_descriptions(SOURCE, _SELECTORS, context,
+                                        list(unique_listings.values()),
+                                        delay_seconds, _GONE_MARKER)
         finally:
             if browser:
                 browser.close()

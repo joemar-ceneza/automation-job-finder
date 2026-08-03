@@ -51,6 +51,7 @@ import resumes
 import salary_bands
 import scraper_common
 import scraper_jobstreet
+import selector_health
 import scraper_onlinejobs
 import scraper_linkedin
 import scraper_indeed
@@ -216,6 +217,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--calibrate", action="store_true",
                         help="Suggest a TARGET_MATCH_SKILLS value from your "
                              "stored jobs, then exit")
+    parser.add_argument("--check-selectors", action="store_true",
+                        help="Report which of each site's selectors still "
+                             "match a live page, then exit")
     parser.add_argument("--email", action="store_true",
                         help="Email a digest of new matches via Gmail SMTP (see .env.example)")
     parser.add_argument("--out", default=config.DEFAULT_OUTPUT_CSV,
@@ -238,7 +242,7 @@ def _parse_args() -> argparse.Namespace:
                         or args.portfolio or args.company
                         or args.rewrite or args.ai_usage or args.propose_skills
                         or args.analytics or args.learn or args.notify
-                        or args.list_resumes
+                        or args.list_resumes or args.check_selectors
                         or args.set_default_resume
                         or (args.prune_days is not None and not args.keyword))
     if not maintenance_only and (not args.resume_pdf or not args.keyword):
@@ -1068,6 +1072,10 @@ def main() -> None:
         return
     if args.backup:
         db_handler.backup_database(reason="manual")
+        return
+    if args.check_selectors:
+        selector_health.run_check(
+            {site: SITE_SCRAPERS[site] for site in args.sites})
         return
     if args.calibrate:
         _run_calibrate()

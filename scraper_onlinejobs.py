@@ -32,6 +32,11 @@ _RESULTS_PER_PAGE = 30
 # ======================================================
 # URL HELPERS
 # ======================================================
+def probe_url(keyword: str) -> str:
+    """One representative search URL, for --check-selectors."""
+    return _build_search_url(keyword, 1)
+
+
 def _build_search_url(keyword: str, page_num: int) -> str:
     """
     Builds the OnlineJobs.ph search URL. Pagination is offset-based:

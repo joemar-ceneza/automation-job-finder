@@ -574,6 +574,24 @@ telling you something a star rating would not.
 > in this codebase. Build the panel without them rather than shipping columns
 > that are permanently empty.
 
+> **Amended 2026-08-03 — LinkedIn and Indeed job scrapers were added anyway.**
+> The paragraph above still holds for *company profile* data, and none is
+> collected. What changed is that `scraper_linkedin.py` and `scraper_indeed.py`
+> now read public job search results from both sites.
+>
+> This was a deliberate reversal, and the cost predicted above arrived
+> immediately: Indeed serves a Cloudflare challenge from page 2 onward — the
+> same bot protection this section cited as the reason to stay away. The code
+> does not attempt to defeat it. `scraper_common.is_blocked()` detects a
+> challenge, reports it as a block rather than as a markup change, and stops
+> paginating. Proxy rotation and CAPTCHA solving are out of scope by choice,
+> not by oversight.
+>
+> What that leaves: Indeed is effectively a one-page source, LinkedIn is
+> rate-limited harder than the rest, and both carry terms restricting automated
+> collection. Keep the volume low and treat both as best-effort extras rather
+> than as dependable inputs.
+
 **AI.** Culture and interview-process summary inferred *from the advertisement
 text only*, with advantages and concerns, clearly labelled as inference from the
 ad rather than researched fact.

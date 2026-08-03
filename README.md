@@ -102,16 +102,30 @@ Be told about new jobs worth opening, without being spammed:
 ```
 python main.py --notify
 ```
-Off until you set `NOTIFY_CHANNELS` in `config.py` to `["desktop"]`, `["email"]`,
-or both. Once set it also runs automatically at the end of every search, which
-is the point — a scheduled run is exactly when you aren't watching the terminal.
+Off until you set `NOTIFY_CHANNELS` in `config.py` to any of `["desktop"]`,
+`["email"]`, `["telegram"]`, or a combination. Once set it also runs
+automatically at the end of every search, which is the point — a scheduled run
+is exactly when you aren't watching the terminal.
 
 Four quiet rules apply before anything is sent, and each can veto: only jobs at
 `NOTIFY_MIN_SCORE`+ (default 25%), never the same job twice, at most
 `NOTIFY_MAX_PER_RUN` (default 5) per run, and nothing during
 `NOTIFY_QUIET_HOURS` (default 22:00–07:00). Everything held back is reported
-with its reason. Desktop toasts need `pip install win11toast`; without it that
-channel says so once and email still works.
+with its reason.
+
+| Channel | Needs |
+|---------|-------|
+| `desktop` | `pip install win11toast` — without it the channel says so once and the others still work |
+| `email` | the same Gmail `.env` settings as `--email` |
+| `telegram` | `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env` (see `.env.example` for how to get both) |
+
+A job is recorded as announced only when a channel actually accepted it, so a
+failed send never silences a job permanently. Telegram messages are escaped and
+split before sending: Telegram rejects an entire message whose Markdown does not
+parse, and titles like "Node_JS Developer" or "Dev [Remote]" are ordinary — one
+of them going out unescaped would otherwise fail the same way on every future
+run. If formatting is rejected anyway, the message is re-sent as plain text
+rather than dropped.
 
 See what to learn next — your biggest gaps, in prerequisite order:
 ```
@@ -192,13 +206,36 @@ The pipeline:
 
 ## Job sites
 
-| Site | Notes |
-|------|-------|
-| `jobstreet` | JobStreet PH. Supports `--location` and `--full-desc`. |
-| `onlinejobs` | OnlineJobs.ph (remote jobs for PH workers). All listings are work-from-home; salaries are usually **USD** and kept as raw text (not converted into the peso `salary_min/max` columns). Employer names aren't shown on search cards. |
-| `linkedin` | LinkedIn Jobs. Supports `--location` and `--full-desc`. Large job market with tech roles. |
-| `indeed` | Indeed Philippines. Supports `--location` and `--full-desc`. ✅ Working. |
-| `kalibrr` | Kalibrr Philippines. **Note:** May have access restrictions or require login. Selectors may need adjustment. |
+Five sites, and they are not equally dependable. The first three are solid; the
+last two are best-effort extras.
+
+| Site | Reliability | Notes |
+|------|-------------|-------|
+| `jobstreet` | solid | JobStreet PH. Supports `--location` and `--full-desc`. |
+| `onlinejobs` | solid | OnlineJobs.ph (remote jobs for PH workers). All listings are work-from-home; salaries are usually **USD** and kept as raw text (not converted into the peso `salary_min/max` columns). Employer names aren't shown on search cards. |
+| `kalibrr` | solid | Filters by typing into the page rather than by URL, and pages with a "Load More" button — so `--pages N` means N clicks, not N pages. Ignores `--location`. |
+| `linkedin` | limited | Rate-limits harder than the rest. Keep `--pages` low and `--delay` high. |
+| `indeed` | page 1 only | Serves a Cloudflare challenge from page 2 onward. The scraper detects it, says so plainly, keeps page 1's results and stops — it does not try to defeat it. Use `--pages 1`. |
+
+> **On LinkedIn and Indeed:** both restrict automated collection in their terms,
+> and Indeed actively challenges it. Keep the volume low. When a run reports a
+> block, that is the site declining — not a bug to work around. Proxy rotation
+> and CAPTCHA solving are deliberately not implemented.
+
+### Checking whether a site still works
+```
+python main.py --check-selectors                    # all sites
+python main.py --check-selectors --site jobstreet   # just one
+```
+Loads one search page per site and reports, per selector, how many elements it
+matches.
+
+Selector rot is the most common way this tool breaks, and its symptom — a
+scheduled run quietly finding nothing — is indistinguishable from a genuinely
+quiet day. This turns that into a report you can read. It is worth running
+whenever results look thin, and it earns its keep: its first run found that
+JobStreet had changed `jobLocation` from a `<span>` to an `<a>`, which had been
+silently blanking the location on every JobStreet job.
 
 ## Options
 
@@ -291,6 +328,7 @@ Each of these **exits** when done, and each has an `--ai` variant.
 | Flag           | Default | Description                                        |
 |----------------|---------|----------------------------------------------------|
 | `--backup`     | off     | **Exits.** Copy the database to `output/backups/`  |
+| `--check-selectors` | off | **Exits.** Report which selectors still match a live page, per site |
 | `--calibrate`  | off     | **Exits.** Suggest a `TARGET_MATCH_SKILLS` value from your stored jobs |
 | `--rescore`    | off     | Re-score all stored jobs against the current skill list |
 | `--prune-days` | off     | Archive jobs not seen in N days (standalone or during a run) |
@@ -447,15 +485,20 @@ automation-job-finder/
 ├── config.py              # All settings, per-site selectors, weights, paths
 ├── utils.py               # Generic retry helper (exponential backoff)
 ├── resume_parser.py       # Extracts text from PDF resume, matches skills.txt
-├── scraper_common.py      # Shared scraper pieces (JobListing, keys, dates)
+├── scraper_common.py      # Shared scraper pieces: JobListing, keys, dates,
+│                          #   anti-bot detection, the detail-page fetcher
 ├── scraper_jobstreet.py   # JobStreet PH scraper
 ├── scraper_onlinejobs.py  # OnlineJobs.ph scraper
+├── scraper_kalibrr.py     # Kalibrr PH scraper ("Load More" paging)
+├── scraper_linkedin.py    # LinkedIn Jobs scraper (rate-limited)
+├── scraper_indeed.py      # Indeed PH scraper (page 1 only — CAPTCHA beyond)
 ├── dedupe.py              # Cross-site duplicate flagging
 ├── matcher.py             # Weighted scoring, salary/years extraction, CSV + HTML export
 ├── db_handler.py          # SQLite persistence, stage tracking, prune/rescore
 ├── stages.py              # Twelve-stage lifecycle + legal transitions
 ├── email_handler.py       # Gmail SMTP digest of new matches
-├── notifications.py       # Quiet rules + desktop/email channels (--notify)
+├── notifications.py       # Quiet rules + desktop/email/telegram (--notify)
+├── selector_health.py     # Per-site selector health report (--check-selectors)
 ├── resume_import.py       # PDF -> master_resume.md, once (--import-resume)
 ├── resume_model.py        # Structured master-resume model (parse/serialise Markdown)
 ├── resumes.py             # Registry of resume variants in resumes/
@@ -494,7 +537,7 @@ automation-job-finder/
 │   └── cover_letters/     # direct.txt, warm.txt, technical.txt templates
 ├── docs/
 │   └── ARCHITECTURE.md    # Why it's built this way — design rationale
-├── tests/                 # 411 tests, none of which call a real model
+├── tests/                 # 465 tests — no real model, no live site
 ├── resumes/               # Your resume variants (gitignored)
 ├── logs/                  # automation.log, debug HTML, error screenshots
 └── output/                # jobs.db, backups/, ranked_jobs.csv, report.html
@@ -504,7 +547,7 @@ automation-job-finder/
 ```
 pytest -q
 ```
-411 tests, all offline and all fast. Two rules keep them that way: **no test ever
+465 tests, all offline and all fast. Two rules keep them that way: **no test ever
 calls a real model** — a fake provider returns canned responses and a failing one
 raises, so the degrade-to-Standard path is exercised on every run rather than
 discovered in production — and **scrapers are tested against saved HTML**, so a

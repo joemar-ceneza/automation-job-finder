@@ -19,34 +19,29 @@ import logging
 import re
 import time
 import urllib.parse
-from dataclasses import asdict
 
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 import config
 import utils
-from scraper_common import (AdGoneError, JobListing, make_job_key,
+from scraper_common import (AntiBotBlockedError, JobListing,
+                            fetch_full_descriptions, is_blocked, make_job_key,
                             parse_relative_date, save_debug_html,
-                            save_error_screenshot)
+                            save_error_screenshot, text_from)
 
 SOURCE = "indeed"
 _SELECTORS = config.SELECTORS[SOURCE]
 _JOB_ID_PATTERN = re.compile(r"jk=([a-zA-Z0-9]+)")
 
 
-def _is_gone(page, response) -> bool:
-    """True when the job ad was removed/expired (404 or takedown page)."""
-    if response is not None and response.status in (404, 410):
-        return True
-    if "page not found" in (page.title() or "").lower():
-        return True
-    return "no longer available" in (page.content() or "").lower()
-
-
 # ======================================================
 # URL HELPERS
 # ======================================================
+def probe_url(keyword: str) -> str:
+    """One representative search URL, for --check-selectors."""
+    return _build_search_url(keyword, 1)
+
+
 def _build_search_url(keyword: str, page_num: int, location: str = "") -> str:
     """
     Builds the Indeed Philippines search URL for a keyword, page number, and
@@ -86,20 +81,14 @@ def _extract_listing(card, search_keyword: str) -> JobListing | None:
 
     href = link_el.get_attribute("href") or ""
     job_url = href if href.startswith("http") else config.INDEED_BASE_URL + href
-    # Clean up tracking parameters but keep jk= (job key)
+    # Drop tracking parameters but keep jk= (the job key).
     if "?" in job_url:
         base, params_str = job_url.split("?", 1)
-        jk_match = re.search(r"jk=([a-zA-Z0-9]+)", params_str)
+        jk_match = _JOB_ID_PATTERN.search(params_str)
         if jk_match:
             job_url = f"{base}?jk={jk_match.group(1)}"
 
-    company_el = card.query_selector(_SELECTORS["job_company"])
-    location_el = card.query_selector(_SELECTORS["job_location"])
-    teaser_el = card.query_selector(_SELECTORS["job_teaser"])
-    salary_el = card.query_selector(_SELECTORS["job_salary"])
-    date_el = card.query_selector(_SELECTORS["job_listing_date"])
-
-    company = company_el.inner_text().strip() if company_el else ""
+    company = text_from(card, _SELECTORS.get("job_company"))
 
     id_match = _JOB_ID_PATTERN.search(job_url)
     return JobListing(
@@ -107,12 +96,13 @@ def _extract_listing(card, search_keyword: str) -> JobListing | None:
                              title, company),
         title=title,
         company=company,
-        location=location_el.inner_text().strip() if location_el else "",
-        teaser=teaser_el.inner_text().strip() if teaser_el else "",
+        location=text_from(card, _SELECTORS.get("job_location")),
+        teaser=text_from(card, _SELECTORS.get("job_teaser")),
         url=job_url,
         source=SOURCE,
-        salary=salary_el.inner_text().strip() if salary_el else "",
-        listing_date=parse_relative_date(date_el.inner_text()) if date_el else "",
+        salary=text_from(card, _SELECTORS.get("job_salary")),
+        listing_date=parse_relative_date(
+            text_from(card, _SELECTORS.get("job_listing_date"))),
         search_keyword=search_keyword,
     )
 
@@ -139,31 +129,27 @@ def _scrape_search_page(page, keyword: str, page_num: int, debug: bool,
         # Give the page a moment for JS-rendered content to settle.
         page.wait_for_timeout(config.RENDER_WAIT_MS)
     else:
-        # Subsequent pages: click the "Next" button
         logging.info("[indeed] Clicking 'Next' to go to page %d", page_num)
         try:
-            # Try to find and click the Next button
-            next_button = page.query_selector('a[aria-label="Next Page"]')
-            if not next_button:
-                next_button = page.query_selector('a[data-testid="pagination-page-next"]')
-            if not next_button:
-                next_button = page.query_selector('li.next a')
-
-            if next_button:
-                utils.retry(
-                    lambda: next_button.click(),
-                    retries=config.RETRY_ATTEMPTS,
-                    delay=config.RETRY_DELAY_SECONDS,
-                    backoff=config.RETRY_BACKOFF,
-                )
-                # Wait for page to load after clicking
-                page.wait_for_timeout(config.RENDER_WAIT_MS * 2)
-            else:
-                logging.warning("[indeed] No 'Next' button found on page %d",
-                                page_num - 1)
-                return []
-        except Exception as e:
-            logging.error("[indeed] Failed to click 'Next' button: %s", e)
+            # Re-query inside the retried callable. Holding an ElementHandle
+            # across attempts is pointless: once a click starts navigating, the
+            # handle detaches and every retry fails on a stale element rather
+            # than on the thing that actually went wrong.
+            utils.retry(
+                lambda: page.click(_SELECTORS["next_button"],
+                                   timeout=config.DETAIL_WAIT_TIMEOUT_MS),
+                retries=config.RETRY_ATTEMPTS,
+                delay=config.RETRY_DELAY_SECONDS,
+                backoff=config.RETRY_BACKOFF,
+            )
+            page.wait_for_timeout(config.RENDER_WAIT_MS * 2)
+        except Exception as error:
+            if is_blocked(page):
+                raise AntiBotBlockedError(
+                    f"blocked before page {page_num}") from error
+            logging.warning("[indeed] No usable 'Next' button on page %d (%s) "
+                            "— treating that as the last page.",
+                            page_num - 1, error)
             return []
 
     if debug:
@@ -177,7 +163,13 @@ def _scrape_search_page(page, keyword: str, page_num: int, debug: bool,
             listings.append(listing)
 
     if not listings:
-        # Selectors may have changed -- always keep evidence for troubleshooting.
+        # A bot challenge and a markup change look identical from here — both
+        # yield zero cards — but they need opposite responses, so tell them
+        # apart before advising anyone to go and edit selectors.
+        if is_blocked(page):
+            save_debug_html(page, f"indeed_blocked_page{page_num}")
+            raise AntiBotBlockedError(
+                f"Indeed served a verification challenge on page {page_num}")
         html_path = save_debug_html(page, f"indeed_no_results_page{page_num}")
         logging.warning(
             "[indeed] 0 listings extracted from page %d -- the site may have "
@@ -185,73 +177,6 @@ def _scrape_search_page(page, keyword: str, page_num: int, debug: bool,
             page_num, html_path)
 
     return listings
-
-
-# ======================================================
-# JOB DETAIL PAGES
-# ======================================================
-def _fetch_job_details(context, url: str) -> tuple[str, str]:
-    """
-    Opens a job's detail page in a fresh tab and returns
-    (full_description, salary). Salary is "" when the ad doesn't state one.
-    Raises AdGoneError when the ad was removed after appearing in search.
-    """
-    page = context.new_page()
-    try:
-        response = page.goto(url, wait_until="domcontentloaded",
-                             timeout=config.PAGE_LOAD_TIMEOUT_MS)
-        if _is_gone(page, response):
-            raise AdGoneError(f"job ad removed: {url}")
-        try:
-            page.wait_for_selector(_SELECTORS["job_detail_description"],
-                                   timeout=config.DETAIL_WAIT_TIMEOUT_MS)
-        except PlaywrightTimeoutError:
-            # Takedown pages can render after domcontentloaded -- recheck
-            if _is_gone(page, response):
-                raise AdGoneError(f"job ad removed: {url}")
-            raise
-
-        detail_el = page.query_selector(_SELECTORS["job_detail_description"])
-        salary_el = page.query_selector(_SELECTORS["job_detail_salary"])
-
-        description = detail_el.inner_text().strip() if detail_el else ""
-        salary = salary_el.inner_text().strip() if salary_el else ""
-        return description, salary
-    finally:
-        page.close()
-
-
-def _fetch_full_descriptions(context, listings: list[JobListing],
-                             delay_seconds: float) -> None:
-    """Visits each job's detail page (rate limited) and fills in description."""
-    logging.info("[indeed] Fetching full descriptions for %d jobs "
-                 "(one request per %.1fs)...", len(listings), delay_seconds)
-    fetched = 0
-    gone = 0
-    for index, listing in enumerate(listings, start=1):
-        try:
-            description, salary = utils.retry(
-                lambda: _fetch_job_details(context, listing.url),
-                retries=config.RETRY_ATTEMPTS,
-                delay=config.RETRY_DELAY_SECONDS,
-                backoff=config.RETRY_BACKOFF,
-                give_up_on=(AdGoneError,),
-            )
-            listing.description = description
-            if salary and not listing.salary:
-                listing.salary = salary
-            fetched += 1
-        except AdGoneError:
-            gone += 1
-            logging.info("[indeed] '%s' is no longer advertised -- "
-                         "keeping the search-card teaser.", listing.title)
-        except Exception as e:
-            logging.error("[indeed] Could not fetch description for '%s' (%s): %s",
-                          listing.title, listing.url, e)
-        if index < len(listings):
-            time.sleep(delay_seconds)  # be polite, avoid rate limits
-    logging.info("[indeed] Full descriptions fetched: %d/%d (%d ads "
-                 "no longer advertised)", fetched, len(listings), gone)
 
 
 def _scrape_keyword(page, keyword: str, max_pages: int, delay_seconds: float,
@@ -267,6 +192,17 @@ def _scrape_keyword(page, keyword: str, max_pages: int, delay_seconds: float,
             listings = _scrape_search_page(
                 page, keyword, page_num, debug, location,
                 first_page=(page_num == 1))
+        except AntiBotBlockedError as error:
+            # Expected on page 2+: Indeed fronts pagination with Cloudflare.
+            # Say so plainly instead of implying the selectors need editing,
+            # and keep whatever earlier pages returned.
+            logging.warning(
+                "[indeed] %s. Pages beyond %d are not reachable without "
+                "defeating that challenge, which this tool does not do — "
+                "keeping the %d listing(s) already found. Use --pages 1 for "
+                "Indeed to skip this.", error, page_num - 1,
+                len(unique_listings))
+            break
         except Exception as e:
             logging.error("[indeed] Failed to scrape search page %d: %s",
                           page_num, e)
@@ -332,8 +268,9 @@ def run_scraper(keywords: list[str] | str, max_pages: int = config.DEFAULT_PAGES
                              "across pages/keywords.", duplicates)
 
             if fetch_details and unique_listings:
-                _fetch_full_descriptions(context, list(unique_listings.values()),
-                                         delay_seconds)
+                fetch_full_descriptions(SOURCE, _SELECTORS, context,
+                                        list(unique_listings.values()),
+                                        delay_seconds)
         finally:
             if browser:
                 browser.close()
