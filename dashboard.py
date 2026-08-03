@@ -1355,9 +1355,15 @@ def _render_search_form() -> None:
                                   placeholder="Metro Manila")
     pages = row1[1].number_input("Pages per keyword", 1, 20,
                                  value=int(config.DEFAULT_PAGES), key="run_pages")
-    delay = row1[2].number_input("Delay between pages (s)", 0.0, 30.0,
-                                 value=float(config.DEFAULT_DELAY_SECONDS),
-                                 step=0.5, key="run_delay")
+    # 0 means "let each site use its own delay" — passing one number here would
+    # override the per-site values and hit LinkedIn at JobStreet's pace.
+    delay = row1[2].number_input("Delay between pages (s) — 0 = per site",
+                                 0.0, 30.0, value=0.0, step=0.5,
+                                 key="run_delay",
+                                 help="Leave at 0 to use each site's own "
+                                      "politeness delay (LinkedIn and Indeed "
+                                      "get a longer one). Any other value "
+                                      "applies to every site.")
     sites = st.multiselect("Sites", _SITE_OPTIONS,
                            default=list(config.DEFAULT_SITES), key="run_sites")
 
@@ -1388,7 +1394,9 @@ def _render_search_form() -> None:
             st.error("Select at least one site.")
             return
         args = [resume_pdf, keyword, "--site", ",".join(sites),
-                "--pages", str(int(pages)), "--delay", str(delay)]
+                "--pages", str(int(pages))]
+        if delay > 0:
+            args += ["--delay", str(delay)]
         if location:
             args += ["--location", location]
         if skills_path and skills_path != config.DEFAULT_SKILLS_FILE:

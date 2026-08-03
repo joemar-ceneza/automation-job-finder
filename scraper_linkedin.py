@@ -250,7 +250,7 @@ if __name__ == "__main__":
                         "comma-separated, e.g. 'python developer, automation engineer'")
     parser.add_argument("--pages", type=int, default=config.DEFAULT_PAGES,
                         help="Number of search pages to scrape per keyword")
-    parser.add_argument("--delay", type=float, default=config.DEFAULT_DELAY_SECONDS,
+    parser.add_argument("--delay", type=float, default=config.delay_for(SOURCE),
                         help="Delay in seconds between page requests")
     parser.add_argument("--location", default="",
                         help="Location filter, e.g. 'Metro Manila'")

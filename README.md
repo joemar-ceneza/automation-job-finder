@@ -206,16 +206,27 @@ The pipeline:
 
 ## Job sites
 
-Five sites, and they are not equally dependable. The first three are solid; the
-last two are best-effort extras.
+Five sites, and they are not equally dependable. **A bare run searches the three
+solid ones**; LinkedIn and Indeed are opt-in via `--site`, because both restrict
+automated collection and hitting them on every scheduled run spends ban risk
+nobody chose to spend.
+
+```
+python main.py resume.pdf "developer"                        # jobstreet, onlinejobs, kalibrr
+python main.py resume.pdf "developer" --site linkedin,indeed # opt in
+```
+
+Each site also carries its own politeness delay (`config.SITE_DELAY_SECONDS`) —
+3s for the solid three, 6s for LinkedIn and Indeed, which are less tolerant.
+Passing `--delay` overrides all of them with one value.
 
 | Site | Reliability | Notes |
 |------|-------------|-------|
 | `jobstreet` | solid | JobStreet PH. Supports `--location` and `--full-desc`. |
 | `onlinejobs` | solid | OnlineJobs.ph (remote jobs for PH workers). All listings are work-from-home; salaries are usually **USD** and kept as raw text (not converted into the peso `salary_min/max` columns). Employer names aren't shown on search cards. |
 | `kalibrr` | solid | Filters by typing into the page rather than by URL, and pages with a "Load More" button — so `--pages N` means N clicks, not N pages. Ignores `--location`. |
-| `linkedin` | limited | Rate-limits harder than the rest. Keep `--pages` low and `--delay` high. |
-| `indeed` | page 1 only | Serves a Cloudflare challenge from page 2 onward. The scraper detects it, says so plainly, keeps page 1's results and stops — it does not try to defeat it. Use `--pages 1`. |
+| `linkedin` | limited | Opt-in. Rate-limits harder than the rest, so it gets a 6s delay by default. Keep `--pages` low. |
+| `indeed` | page 1 only | Opt-in. Serves a Cloudflare challenge from page 2 onward. The scraper detects it, says so plainly, keeps page 1's results and stops — it does not try to defeat it. Use `--pages 1`. |
 
 > **On LinkedIn and Indeed:** both restrict automated collection in their terms,
 > and Indeed actively challenges it. Keep the volume low. When a run reports a
@@ -247,10 +258,10 @@ PDF required.
 
 | Flag           | Default                  | Description                                        |
 |----------------|--------------------------|----------------------------------------------------|
-| `--site`       | both                     | Comma-separated sites: `jobstreet`, `onlinejobs`  |
+| `--site`       | the 3 solid ones         | Comma-separated: `jobstreet`, `onlinejobs`, `kalibrr`, `linkedin`, `indeed` |
 | `--skills`     | `skills.txt`             | Path to your skills keyword file                   |
 | `--pages`      | `2`                      | Search-result pages to scrape per keyword          |
-| `--delay`      | `3.0`                    | Seconds between page requests (also rate-limits detail pages) |
+| `--delay`      | per site                 | Seconds between page requests (also rate-limits detail pages). Defaults to each site's own value — 3s for the solid three, 6s for LinkedIn and Indeed. Passing it applies one value everywhere. |
 | `--location`   | off                      | Limit results to a location, e.g. `"Metro Manila"` (JobStreet only; OnlineJobs is remote-only) |
 | `--full-desc`  | off                      | Visit each job's detail page for the full description (slower, more accurate scoring) |
 | `--debug`      | off                      | Run browser visibly, save page HTML for every page |
@@ -537,7 +548,7 @@ automation-job-finder/
 │   └── cover_letters/     # direct.txt, warm.txt, technical.txt templates
 ├── docs/
 │   └── ARCHITECTURE.md    # Why it's built this way — design rationale
-├── tests/                 # 465 tests — no real model, no live site
+├── tests/                 # 473 tests — no real model, no live site
 ├── resumes/               # Your resume variants (gitignored)
 ├── logs/                  # automation.log, debug HTML, error screenshots
 └── output/                # jobs.db, backups/, ranked_jobs.csv, report.html
@@ -547,7 +558,7 @@ automation-job-finder/
 ```
 pytest -q
 ```
-465 tests, all offline and all fast. Two rules keep them that way: **no test ever
+473 tests, all offline and all fast. Two rules keep them that way: **no test ever
 calls a real model** — a fake provider returns canned responses and a failing one
 raises, so the degrade-to-Standard path is exercised on every run rather than
 discovered in production — and **scrapers are tested against saved HTML**, so a

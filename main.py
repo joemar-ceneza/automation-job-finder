@@ -102,8 +102,11 @@ def _parse_args() -> argparse.Namespace:
                         help="Path to skills keyword list")
     parser.add_argument("--pages", type=int, default=config.DEFAULT_PAGES,
                         help="Number of search-result pages to scrape per keyword")
-    parser.add_argument("--delay", type=float, default=config.DEFAULT_DELAY_SECONDS,
-                        help="Seconds between page requests")
+    parser.add_argument("--delay", type=float, default=None,
+                        help="Seconds between page requests. Defaults to a "
+                             "per-site value (config.SITE_DELAY_SECONDS — "
+                             "LinkedIn and Indeed get a longer one); passing "
+                             "this applies one delay to every site.")
     parser.add_argument("--location", default="",
                         help="Limit results to a location, e.g. 'Metro Manila'")
     parser.add_argument("--site", default=",".join(config.DEFAULT_SITES),
@@ -1104,12 +1107,16 @@ def main() -> None:
                  f"{len(keywords)} keyword(s)")
     jobs = []
     for site in args.sites:
+        # An explicit --delay applies everywhere; otherwise each site gets the
+        # delay its tolerance actually calls for.
+        delay = args.delay if args.delay is not None else config.delay_for(site)
         try:
             site_jobs = SITE_SCRAPERS[site].run_scraper(
-                keywords, max_pages=args.pages, delay_seconds=args.delay,
+                keywords, max_pages=args.pages, delay_seconds=delay,
                 debug=args.debug, fetch_details=args.full_desc,
                 location=args.location)
-            logging.info("[%s] Collected %d unique listings.", site, len(site_jobs))
+            logging.info("[%s] Collected %d unique listings (%.1fs between "
+                         "requests).", site, len(site_jobs), delay)
             jobs.extend(site_jobs)
         except Exception as e:
             logging.error("[%s] Scraper failed, continuing with other "

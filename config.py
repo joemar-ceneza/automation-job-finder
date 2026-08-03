@@ -83,7 +83,29 @@ LOAD_MORE_TIMEOUT_MS = 10000
 
 # Sites searched when --site isn't given. Each name maps to a
 # scraper_<name>.py module with a run_scraper() entry point.
-DEFAULT_SITES = ["jobstreet", "onlinejobs", "linkedin", "indeed", "kalibrr"]
+#
+# LinkedIn and Indeed are deliberately NOT here. Both restrict automated
+# collection in their terms, Indeed challenges it from page 2, and LinkedIn
+# rate-limits harder than the rest — so hitting them on every scheduled run,
+# unprompted, spends goodwill (and ban risk) on the two least reliable sources.
+# They stay one flag away: --site linkedin,indeed
+DEFAULT_SITES = ["jobstreet", "onlinejobs", "kalibrr"]
+
+# Seconds between requests, per site. A single shared delay is wrong once the
+# sites differ this much in tolerance: 3s is fine for JobStreet and rude to
+# LinkedIn. --delay overrides all of these when passed explicitly.
+SITE_DELAY_SECONDS = {
+    "jobstreet": 3.0,
+    "onlinejobs": 3.0,
+    "kalibrr": 3.0,
+    "linkedin": 6.0,      # rate-limits aggressively
+    "indeed": 6.0,        # anti-bot; page 1 only in practice
+}
+
+
+def delay_for(site: str) -> float:
+    """The politeness delay for a site, falling back to the global default."""
+    return SITE_DELAY_SECONDS.get(site, DEFAULT_DELAY_SECONDS)
 
 # Companies whose listings are skipped entirely — never scored, stored, or
 # shown. Case-insensitive substring match on the company name, so "acme"
