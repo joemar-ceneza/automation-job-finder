@@ -36,22 +36,34 @@ def _section(title: str) -> None:
 # ======================================================
 # PROBING ONE SITE
 # ======================================================
-def _count_matches(page, selector: str | None) -> int | None:
-    """How many elements a selector matches, or None when it isn't set."""
-    if not selector:
-        return None
-    try:
-        return len(page.query_selector_all(selector))
-    except Exception as error:              # an invalid selector is a finding
-        logging.debug("Selector %r could not be evaluated: %s", selector, error)
-        return -1
+def _count_matches(page, selector) -> tuple[int | None, str, int]:
+    """
+    (match count, the candidate that matched, its position in the list).
+
+    Reporting *which* fallback matched matters as much as whether one did: a
+    site running on its second or third candidate is working today and telling
+    you the primary selector has already rotted.
+    """
+    options = scraper_common.candidates(selector)
+    if not options:
+        return None, "", 0
+    for position, candidate in enumerate(options):
+        try:
+            found = len(page.query_selector_all(candidate))
+        except Exception as error:          # an invalid selector is a finding
+            logging.debug("Selector %r could not be evaluated: %s",
+                          candidate, error)
+            return -1, candidate, position
+        if found:
+            return found, candidate, position
+    return 0, options[0], 0
 
 
 def _probe_site(context, site: str, module) -> dict:
     """Loads one search page for a site and counts every selector's matches."""
     selectors = config.SELECTORS[site]
     result = {"site": site, "url": "", "blocked": False, "error": "",
-              "counts": {}}
+              "counts": {}, "total": {}}
     page = context.new_page()
     try:
         result["url"] = module.probe_url(_PROBE_KEYWORD)
@@ -67,6 +79,7 @@ def _probe_site(context, site: str, module) -> dict:
 
         for name, selector in selectors.items():
             result["counts"][name] = _count_matches(page, selector)
+            result["total"][name] = len(scraper_common.candidates(selector))
     except Exception as error:
         result["error"] = str(error)
     finally:
@@ -77,24 +90,36 @@ def _probe_site(context, site: str, module) -> dict:
 # ======================================================
 # REPORTING
 # ======================================================
-def _verdict(name: str, count: int | None) -> str:
+def _verdict(name: str, found: tuple, total: int) -> str:
+    count, candidate, position = found
     if count is None:
         return "not set"
     if count == -1:
-        return "INVALID"
+        return f"INVALID selector: {candidate}"
     if count > 0:
+        if position:
+            # Working, but on a backup — the primary has already rotted, and
+            # this is the only warning you will get before the backup goes too.
+            return (f"{count} match(es) — on FALLBACK {position + 1}/{total} "
+                    f"({candidate}); the primary no longer matches")
         return f"{count} match(es)"
     if name in _NOT_ON_SEARCH_PAGE:
         return "0 — detail page only, not checked here"
     if name in _OPTIONAL:
         return "0 — optional, may be absent"
-    return "0 — BROKEN"
+    return f"0 — BROKEN (tried {total})"
 
 
-def _is_broken(name: str, count: int | None) -> bool:
+def _is_broken(name: str, found: tuple) -> bool:
+    count = found[0]
     if count is None or name in _NOT_ON_SEARCH_PAGE or name in _OPTIONAL:
         return False
-    return count <= 0
+    return count is not None and count <= 0
+
+
+def _on_fallback(found: tuple) -> bool:
+    count, _, position = found
+    return bool(count and count > 0 and position)
 
 
 def _report_site(result: dict) -> int:
@@ -111,18 +136,24 @@ def _report_site(result: dict) -> int:
         logging.error("  Could not load the page: %s", result["error"])
         return 0
 
-    broken = 0
-    for name, count in result["counts"].items():
-        verdict = _verdict(name, count)
-        if _is_broken(name, count):
+    broken = degraded = 0
+    for name, found in result["counts"].items():
+        verdict = _verdict(name, found, result["total"].get(name, 1))
+        if _is_broken(name, found):
             broken += 1
+        if _on_fallback(found):
+            degraded += 1
         logging.info(f"  {name:<24}: {verdict}")
 
     if broken:
         logging.warning("  %d selector(s) match nothing — update "
                         "SELECTORS['%s'] in config.py.", broken, site)
-    else:
-        logging.info("  All checkable selectors still match.")
+    if degraded:
+        logging.warning("  %d selector(s) are running on a fallback. They work "
+                        "today, but the primary has rotted — promote the "
+                        "working one before its backup goes too.", degraded)
+    if not broken and not degraded:
+        logging.info("  All checkable selectors still match on their primary.")
     return broken
 
 

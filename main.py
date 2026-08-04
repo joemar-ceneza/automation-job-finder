@@ -1179,6 +1179,16 @@ def main() -> None:
         row["description"] = descriptions.get(row["job_key"], "")
     db_handler.insert_jobs(new_rows)
     db_handler.mark_seen(list(seen_keys))
+
+    # Fill in fields that were blank on jobs we have seen before. A job is
+    # scored once and then only has last_seen touched, so without this a
+    # scraping bug stays baked into the corpus even after the code is fixed.
+    healed = db_handler.refresh_missing_fields(
+        [asdict(job) for job in jobs if job.job_key in seen_keys])
+    if healed:
+        logging.info("Filled in missing details on %d previously-seen job(s).",
+                     healed)
+
     db_handler.replace_job_skills(
         skill_extractor.extract_for_rows(new_rows, extra_skills))
 

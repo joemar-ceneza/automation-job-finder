@@ -144,20 +144,27 @@ KALIBRR_RENDER_WAIT_MS = 3000
 
 # Centralized selectors per site — patch here when a site changes its markup.
 SELECTORS = {
+    # Any entry may be a single selector or a LIST of fallbacks tried in order,
+    # first match wins. Fallbacks are how a markup change becomes survivable
+    # instead of fatal.
+    #
     # The data-automation attribute is the stable part of JobStreet's markup;
     # the element type is not. Pinning these to a tag is what silently broke
     # job_location — the attribute never moved, the <span> just became an <a>.
     # Match on the attribute alone so the next tag change costs nothing.
     "jobstreet": {
-        "job_card": "article",
-        "job_title": "[data-automation='jobTitle']",
-        "job_company": "[data-automation='jobCompany']",
-        "job_location": "[data-automation='jobLocation']",
-        "job_teaser": "[data-automation='jobShortDescription']",
-        "job_salary": "[data-automation='jobSalary']",
-        "job_listing_date": "[data-automation='jobListingDate']",
-        "job_detail_description": "[data-automation='jobAdDetails']",
-        "job_detail_salary": "[data-automation='job-detail-salary']",
+        "job_card": ["article", "[data-card-type='JobCard']",
+                     "[data-testid='job-card']"],
+        "job_title": ["[data-automation='jobTitle']", "a[href*='/job/']"],
+        "job_company": ["[data-automation='jobCompany']"],
+        "job_location": ["[data-automation='jobLocation']",
+                         "[data-automation='jobCardLocation']"],
+        "job_teaser": ["[data-automation='jobShortDescription']"],
+        "job_salary": ["[data-automation='jobSalary']"],
+        "job_listing_date": ["[data-automation='jobListingDate']"],
+        "job_detail_description": ["[data-automation='jobAdDetails']",
+                                   "[data-automation='jobDescription']"],
+        "job_detail_salary": ["[data-automation='job-detail-salary']"],
     },
     "onlinejobs": {
         "job_card": "div.jobpost-cat-box.latest-job-post",
@@ -202,7 +209,12 @@ SELECTORS = {
     "kalibrr": {
         "job_card": "div.k-flex.k-p-4",
         "job_title": "h2 a, h3 a",
-        "job_link": "a[href*=jobs]",
+        # Must require the trailing slash. Every card carries three links — the
+        # company logo, the job, and the company name — and the two company
+        # ones are "/c/<company>/jobs?source=...". A bare *=jobs matched all
+        # three and query_selector returns the first, so every stored Kalibrr
+        # URL pointed at the company's listing page instead of the advert.
+        "job_link": 'a[href*="/jobs/"]',
         # NOTE: Kalibrr's utility-class markup gives several fields the same
         # class. Anything left as None is genuinely not distinguishable on a
         # search card — better an empty field than one silently populated with

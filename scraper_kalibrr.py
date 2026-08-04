@@ -26,7 +26,8 @@ import utils
 from scraper_common import (AntiBotBlockedError, JobListing,
                             fetch_full_descriptions, is_blocked, make_job_key,
                             parse_relative_date, save_debug_html,
-                            save_error_screenshot, text_from)
+                            save_error_screenshot, element_from, query_all,
+                            text_from)
 
 SOURCE = "kalibrr"
 _SELECTORS = config.SELECTORS[SOURCE]
@@ -91,7 +92,7 @@ def _title_and_company(card) -> tuple[str, str]:
 
 def _extract_listing(card, search_keyword: str) -> JobListing | None:
     """Extracts one JobListing from a search-result card element."""
-    link_el = card.query_selector(_SELECTORS["job_link"])
+    link_el = element_from(card, _SELECTORS["job_link"])
     if not link_el:
         return None                        # not a job card
 
@@ -148,7 +149,7 @@ def _harvest(page, keyword: str,
     Extracts cards added since the last pass into unique_listings.
     Returns the new total card count, so each card is only ever parsed once.
     """
-    cards = page.query_selector_all(_SELECTORS["job_card"])
+    cards = query_all(page, _SELECTORS["job_card"])
     for card in cards[seen_cards:]:
         listing = _extract_listing(card, keyword)
         if listing and listing.job_key not in unique_listings:

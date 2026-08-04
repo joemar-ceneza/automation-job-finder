@@ -62,7 +62,41 @@ def make_job_key(source: str, job_id: str, title: str, company: str) -> str:
 # ======================================================
 # FIELD EXTRACTION
 # ======================================================
-def text_from(element, selector: str | None) -> str:
+def candidates(selector: str | list | tuple | None) -> list[str]:
+    """
+    Normalises a selector entry to a list of candidates to try in order.
+
+    A config entry may be a single selector or a list of fallbacks. Fallbacks
+    are how a site's markup change becomes survivable rather than fatal: when
+    JobStreet moved job_location from a <span> to an <a>, a second candidate
+    would have carried the field through untouched.
+    """
+    if not selector:
+        return []
+    if isinstance(selector, str):
+        return [selector]
+    return [candidate for candidate in selector if candidate]
+
+
+def query_all(root, selector: str | list | tuple | None) -> list:
+    """
+    Every element matching the first candidate selector that matches anything.
+    Returns [] when the selector is unset or nothing matches.
+    """
+    if root is None:
+        return []
+    for candidate in candidates(selector):
+        try:
+            found = root.query_selector_all(candidate)
+        except Exception:               # an invalid candidate must not be fatal
+            logging.debug("Selector %r could not be evaluated", candidate)
+            continue
+        if found:
+            return found
+    return []
+
+
+def text_from(element, selector: str | list | tuple | None) -> str:
     """
     Text of the first match, or "" when the selector is absent or misses.
 
@@ -71,10 +105,32 @@ def text_from(element, selector: str | None) -> str:
     Leaving the field empty is honest; pointing it at a colliding selector
     silently fills it with the wrong text.
     """
-    if not selector or element is None:
+    if element is None:
         return ""
-    found = element.query_selector(selector)
-    return found.inner_text().strip() if found else ""
+    for candidate in candidates(selector):
+        try:
+            found = element.query_selector(candidate)
+        except Exception:
+            logging.debug("Selector %r could not be evaluated", candidate)
+            continue
+        if found:
+            return found.inner_text().strip()
+    return ""
+
+
+def element_from(element, selector: str | list | tuple | None):
+    """The first element matching any candidate selector, or None."""
+    if element is None:
+        return None
+    for candidate in candidates(selector):
+        try:
+            found = element.query_selector(candidate)
+        except Exception:
+            logging.debug("Selector %r could not be evaluated", candidate)
+            continue
+        if found:
+            return found
+    return None
 
 
 # ======================================================
@@ -229,20 +285,23 @@ def fetch_job_details(context, selectors: dict, url: str,
         if ad_is_gone(page, response, gone_marker):
             raise AdGoneError(f"job ad removed: {url}")
         try:
-            page.wait_for_selector(selectors["job_detail_description"],
+            # Any candidate matching is enough; only wait on the first, since
+            # waiting on each in turn would multiply the timeout by the number
+            # of fallbacks.
+            page.wait_for_selector(candidates(selectors["job_detail_description"])[0],
                                    timeout=config.DETAIL_WAIT_TIMEOUT_MS)
         except PlaywrightTimeoutError:
             # A takedown page can render after domcontentloaded — recheck before
             # blaming the selector.
             if ad_is_gone(page, response, gone_marker):
                 raise AdGoneError(f"job ad removed: {url}")
-            raise
+            # A fallback may still match even though the first candidate never
+            # appeared, so only give up once none of them do.
+            if not element_from(page, selectors["job_detail_description"]):
+                raise
 
-        detail_el = page.query_selector(selectors["job_detail_description"])
-        salary_el = (page.query_selector(selectors["job_detail_salary"])
-                     if selectors.get("job_detail_salary") else None)
-        return (detail_el.inner_text().strip() if detail_el else "",
-                salary_el.inner_text().strip() if salary_el else "")
+        return (text_from(page, selectors["job_detail_description"]),
+                text_from(page, selectors.get("job_detail_salary")))
     finally:
         page.close()
 

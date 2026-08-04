@@ -280,6 +280,44 @@ def mark_seen(job_keys: list[str]) -> None:
     logging.info("Updated last_seen for %d already-seen jobs.", len(job_keys))
 
 
+def refresh_missing_fields(rows: list[dict]) -> int:
+    """
+    Backfills fields that are empty on already-seen jobs from a fresh scrape.
+    Returns the number of rows changed.
+
+    Only ever fills blanks — it never overwrites a value already there. That is
+    the important half: a quick teaser-only run must not clobber richer data an
+    earlier --full-desc run collected, which is the same rule
+    update_descriptions() follows.
+
+    Without this, a scraping bug is permanent. A job is scored once and then
+    only has last_seen touched, so when jobstreet's job_location selector
+    silently matched nothing, all 643 stored rows kept their blank location
+    even after the selector was fixed — they were "already seen", so nothing
+    ever revisited them. Now a corrected selector heals the corpus as those ads
+    reappear in ordinary searches.
+    """
+    fields = ("location", "salary", "listing_date", "work_arrangement",
+              "company")
+    healed: set[str] = set()
+    with closing(_connect()) as connection, connection:
+        for row in rows:
+            for name in fields:
+                value = row.get(name)
+                if not value:
+                    continue
+                # The WHERE clause does the "only fill blanks" work, which also
+                # makes rowcount an exact count of rows genuinely healed rather
+                # than rows merely matched.
+                cursor = connection.execute(
+                    f"UPDATE jobs SET {name} = ? WHERE job_key = ? "
+                    f"AND ({name} IS NULL OR {name} = '')",
+                    (value, row["job_key"]))
+                if cursor.rowcount:
+                    healed.add(row["job_key"])
+    return len(healed)
+
+
 def update_descriptions(rows: list[dict]) -> list[str]:
     """
     Stores a fuller description for jobs already in the database.

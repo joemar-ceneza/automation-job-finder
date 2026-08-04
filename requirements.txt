@@ -12,3 +12,5 @@ pytest>=8.0
 anthropic>=0.69   # AI mode: the Claude provider
 httpx>=0.27       # AI mode: the OpenAI-compatible provider (Ollama, LM Studio,
                   #   OpenAI). Also used by the Telegram notification channel.
+win11toast>=0.35  # the "desktop" notification channel. Windows-only; without
+                  #   it that channel says so once and the others still work.

@@ -20,8 +20,9 @@ from playwright.sync_api import sync_playwright
 
 import config
 import utils
-from scraper_common import (AdGoneError, JobListing, make_job_key,
-                            save_debug_html, save_error_screenshot)
+from scraper_common import (AdGoneError, JobListing, element_from,
+                            make_job_key, query_all, save_debug_html,
+                            save_error_screenshot, text_from)
 
 SOURCE = "onlinejobs"
 _SELECTORS = config.SELECTORS[SOURCE]
@@ -53,27 +54,25 @@ def _build_search_url(keyword: str, page_num: int) -> str:
 # ======================================================
 def _extract_listing(card, search_keyword: str) -> JobListing | None:
     """Extracts one JobListing from an OnlineJobs.ph search-result card."""
-    link_el = card.query_selector(_SELECTORS["job_link"])
-    title_el = card.query_selector(_SELECTORS["job_title"])
+    link_el = element_from(card, _SELECTORS["job_link"])
+    title_el = element_from(card, _SELECTORS["job_title"])
     if not link_el or not title_el:
         return None
 
     # The h4 holds the title plus a job-type badge ("Full Time") — strip it.
     title = title_el.inner_text().strip()
-    badge_el = card.query_selector(_SELECTORS["job_title_badge"])
-    if badge_el:
-        title = title.replace(badge_el.inner_text().strip(), "").strip()
+    badge = text_from(card, _SELECTORS.get("job_title_badge"))
+    if badge:
+        title = title.replace(badge, "").strip()
 
     href = link_el.get_attribute("href") or ""
     job_url = href if href.startswith("http") else config.ONLINEJOBS_BASE_URL + href
 
-    teaser_el = card.query_selector(_SELECTORS["job_teaser"])
-    salary_el = card.query_selector(_SELECTORS["job_salary"])
-    date_el = card.query_selector(_SELECTORS["job_listing_date"])
-    teaser = teaser_el.inner_text().strip() if teaser_el else ""
-    teaser = re.sub(r"\s*See More\s*$", "", teaser)
+    teaser = re.sub(r"\s*See More\s*$",
+                    "", text_from(card, _SELECTORS.get("job_teaser")))
 
     # data-temp holds an absolute timestamp like "2026-07-03 12:17:53"
+    date_el = element_from(card, _SELECTORS.get("job_listing_date"))
     listing_date = ""
     if date_el:
         listing_date = (date_el.get_attribute("data-temp") or "")[:10]
@@ -88,7 +87,7 @@ def _extract_listing(card, search_keyword: str) -> JobListing | None:
         teaser=teaser,
         url=job_url,
         source=SOURCE,
-        salary=salary_el.inner_text().strip() if salary_el else "",
+        salary=text_from(card, _SELECTORS.get("job_salary")),
         listing_date=listing_date,
         search_keyword=search_keyword,
     )
@@ -112,7 +111,7 @@ def _scrape_search_page(page, keyword: str, page_num: int,
     if debug:
         save_debug_html(page, f"onlinejobs_page{page_num}")
 
-    cards = page.query_selector_all(_SELECTORS["job_card"])
+    cards = query_all(page, _SELECTORS["job_card"])
     listings = []
     for card in cards:
         listing = _extract_listing(card, keyword)

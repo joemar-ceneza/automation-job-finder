@@ -27,7 +27,8 @@ import utils
 from scraper_common import (AntiBotBlockedError, JobListing,
                             fetch_full_descriptions, is_blocked, make_job_key,
                             parse_relative_date, save_debug_html,
-                            save_error_screenshot, text_from)
+                            save_error_screenshot, element_from, query_all,
+                            text_from)
 
 SOURCE = "indeed"
 _SELECTORS = config.SELECTORS[SOURCE]
@@ -68,14 +69,14 @@ def _build_search_url(keyword: str, page_num: int, location: str = "") -> str:
 # ======================================================
 def _extract_listing(card, search_keyword: str) -> JobListing | None:
     """Extracts one JobListing from a search-result card element."""
-    title_el = card.query_selector(_SELECTORS["job_title"])
+    title_el = element_from(card, _SELECTORS["job_title"])
     if not title_el:
         return None  # not a job card
 
     title = title_el.inner_text().strip()
 
     # Indeed job cards have the link on the title
-    link_el = card.query_selector(_SELECTORS["job_link"])
+    link_el = element_from(card, _SELECTORS["job_link"])
     if not link_el:
         return None
 
@@ -155,7 +156,7 @@ def _scrape_search_page(page, keyword: str, page_num: int, debug: bool,
     if debug:
         save_debug_html(page, f"indeed_page{page_num}")
 
-    cards = page.query_selector_all(_SELECTORS["job_card"])
+    cards = query_all(page, _SELECTORS["job_card"])
     listings = []
     for card in cards:
         listing = _extract_listing(card, keyword)

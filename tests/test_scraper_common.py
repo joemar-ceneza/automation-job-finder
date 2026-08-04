@@ -231,6 +231,88 @@ def test_text_is_stripped():
     assert scraper_common.text_from(Card(), "span.loc") == "Makati"
 
 
+# ======================================================
+# SELECTOR FALLBACKS
+# ======================================================
+class Recorder:
+    """A card that only answers to one selector, and logs what was tried."""
+
+    def __init__(self, works: str, text: str = "Makati"):
+        self.works = works
+        self.text = text
+        self.tried: list[str] = []
+
+    def query_selector(self, selector):
+        self.tried.append(selector)
+        return FakeElement(self.text) if selector == self.works else None
+
+    def query_selector_all(self, selector):
+        self.tried.append(selector)
+        return [FakeElement(self.text)] if selector == self.works else []
+
+
+def test_a_single_selector_still_works():
+    assert scraper_common.candidates("div.a") == ["div.a"]
+
+
+def test_a_list_becomes_candidates_in_order():
+    assert scraper_common.candidates(["div.a", "div.b"]) == ["div.a", "div.b"]
+
+
+def test_none_and_empty_yield_no_candidates():
+    assert scraper_common.candidates(None) == []
+    assert scraper_common.candidates([]) == []
+    assert scraper_common.candidates([None, ""]) == []
+
+
+def test_the_first_matching_candidate_wins():
+    card = Recorder(works="div.first")
+    assert scraper_common.text_from(card, ["div.first", "div.second"]) == "Makati"
+    assert card.tried == ["div.first"]      # stops as soon as one matches
+
+
+def test_a_fallback_rescues_a_rotted_primary():
+    """
+    The whole point. When JobStreet moved job_location from a <span> to an <a>,
+    a second candidate would have carried the field through untouched instead of
+    blanking it on 643 rows.
+    """
+    card = Recorder(works="a[data-automation='jobLocation']")
+    found = scraper_common.text_from(
+        card, ["span[data-automation='jobLocation']",
+               "a[data-automation='jobLocation']"])
+    assert found == "Makati"
+    assert len(card.tried) == 2             # tried the primary first
+
+
+def test_all_candidates_missing_yields_empty():
+    card = Recorder(works="div.nothing-matches-this")
+    assert scraper_common.text_from(card, ["div.a", "div.b"]) == ""
+    assert card.tried == ["div.a", "div.b"]
+
+
+def test_query_all_falls_back_too():
+    page = Recorder(works="[data-testid='job-card']")
+    found = scraper_common.query_all(page, ["article", "[data-testid='job-card']"])
+    assert len(found) == 1
+
+
+def test_an_invalid_candidate_does_not_stop_the_rest():
+    """A typo in one fallback must not take the working ones down with it."""
+    class Fussy:
+        def query_selector(self, selector):
+            if selector == "!!bad!!":
+                raise ValueError("invalid selector")
+            return FakeElement("Cebu")
+
+    assert scraper_common.text_from(Fussy(), ["!!bad!!", "div.ok"]) == "Cebu"
+
+
+def test_element_from_returns_the_element_not_its_text():
+    card = Recorder(works="a.link")
+    assert isinstance(scraper_common.element_from(card, ["a.link"]), FakeElement)
+
+
 def test_a_colliding_date_selector_degrades_to_empty_not_garbage():
     """
     Feeding a company name to the date parser must not invent a date — this is

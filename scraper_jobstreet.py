@@ -25,9 +25,9 @@ from playwright.sync_api import sync_playwright
 
 import config
 import utils
-from scraper_common import (JobListing, fetch_full_descriptions, make_job_key,
-                            parse_relative_date, save_debug_html,
-                            save_error_screenshot)
+from scraper_common import (JobListing, element_from, fetch_full_descriptions,
+                            make_job_key, parse_relative_date, query_all,
+                            save_debug_html, save_error_screenshot, text_from)
 
 SOURCE = "jobstreet"
 _SELECTORS = config.SELECTORS[SOURCE]
@@ -64,7 +64,7 @@ def _build_search_url(keyword: str, page_num: int, location: str = "") -> str:
 # ======================================================
 def _extract_listing(card, search_keyword: str) -> JobListing | None:
     """Extracts one JobListing from a search-result card element."""
-    title_el = card.query_selector(_SELECTORS["job_title"])
+    title_el = element_from(card, _SELECTORS["job_title"])
     if not title_el:
         return None  # not a job card (nav/footer/etc.)
 
@@ -72,12 +72,7 @@ def _extract_listing(card, search_keyword: str) -> JobListing | None:
     href = title_el.get_attribute("href") or ""
     job_url = href if href.startswith("http") else config.JOBSTREET_BASE_URL + href
 
-    company_el = card.query_selector(_SELECTORS["job_company"])
-    location_el = card.query_selector(_SELECTORS["job_location"])
-    teaser_el = card.query_selector(_SELECTORS["job_teaser"])
-    salary_el = card.query_selector(_SELECTORS["job_salary"])
-    date_el = card.query_selector(_SELECTORS["job_listing_date"])
-    company = company_el.inner_text().strip() if company_el else ""
+    company = text_from(card, _SELECTORS.get("job_company"))
 
     id_match = _JOB_ID_PATTERN.search(job_url)
     return JobListing(
@@ -85,12 +80,13 @@ def _extract_listing(card, search_keyword: str) -> JobListing | None:
                              title, company),
         title=title,
         company=company,
-        location=location_el.inner_text().strip() if location_el else "",
-        teaser=teaser_el.inner_text().strip() if teaser_el else "",
+        location=text_from(card, _SELECTORS.get("job_location")),
+        teaser=text_from(card, _SELECTORS.get("job_teaser")),
         url=job_url,
         source=SOURCE,
-        salary=salary_el.inner_text().strip() if salary_el else "",
-        listing_date=parse_relative_date(date_el.inner_text()) if date_el else "",
+        salary=text_from(card, _SELECTORS.get("job_salary")),
+        listing_date=parse_relative_date(
+            text_from(card, _SELECTORS.get("job_listing_date"))),
         search_keyword=search_keyword,
     )
 
@@ -114,7 +110,7 @@ def _scrape_search_page(page, keyword: str, page_num: int, debug: bool,
     if debug:
         save_debug_html(page, f"jobstreet_page{page_num}")
 
-    cards = page.query_selector_all(_SELECTORS["job_card"])
+    cards = query_all(page, _SELECTORS["job_card"])
     listings = []
     for card in cards:
         listing = _extract_listing(card, keyword)
